@@ -6,9 +6,15 @@
 module Logger
     ( LogLevel(..)
     , Handle(..)
+    , loggerFilter
+    , withNullLogger
     , withFileLogger
     , withStdLogger
     , withMultiLogger
+    , debug
+    , info
+    , warn
+    , err
     ) where
 
 
@@ -33,35 +39,68 @@ data LogLevel
     deriving (Ord, Eq, Show)
 
 
+debug :: Handle -> Text -> IO ()
+debug h = send h Debug
+
+
+info :: Handle -> Text -> IO ()
+info h = send h Info
+
+
+warn :: Handle -> Text -> IO ()
+warn h = send h Warning
+
+
+err :: Handle -> Text -> IO ()
+err h = send h Error
+
+
 {--}
 
 
-withFileLogger :: FilePath -> LogLevel -> (Handle -> IO r) -> IO r
-withFileLogger path minlevel body = do
+loggerFilter :: LogLevel -> Handle -> Handle
+loggerFilter minlevel inner = do
+    Handle
+        { send = \level text -> do
+            when (level >= minlevel) $ send inner level text }
+
+
+{--}
+
+
+withNullLogger :: (Handle -> IO r) -> IO r
+withNullLogger body = do
+    body $ Handle
+        { send = \level text -> return () }
+
+
+{--}
+
+
+withFileLogger :: FilePath -> (Handle -> IO r) -> IO r
+withFileLogger path body = do
     bracket
-        (new path minlevel)
+        (new path)
         fst
         (body . snd)
 
 
-new :: FilePath -> LogLevel -> IO (IO (), Handle)
-new path minlevel = do
+new :: FilePath -> IO (IO (), Handle)
+new path = do
     fh <- IO.openFile path IO.AppendMode
     return $ (,) (IO.hClose fh) $ Handle
         { send = \level text -> do
-            when (level >= minlevel) $ do
-                TextIO.hPutStrLn fh $ pack (show level) <> ": " <> text }
+            TextIO.hPutStrLn fh $ pack (show level) <> ": " <> text }
 
 
 {--}
 
 
-withStdLogger :: LogLevel -> (Handle -> IO r) -> IO r
-withStdLogger minlevel body = do
+withStdLogger :: (Handle -> IO r) -> IO r
+withStdLogger body = do
     body $ Handle
         { send = \level text -> do
-            when (level >= minlevel) $ do
-                TextIO.putStrLn $ pack (show level) <> ": " <> text }
+            TextIO.putStrLn $ pack (show level) <> ": " <> text }
 
 
 {--}
