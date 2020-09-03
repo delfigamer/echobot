@@ -21,6 +21,7 @@ module Logger
 import Control.Exception
 import Control.Monad
 import Data.Text
+import System.Console.ANSI
 import qualified Data.Text.IO as TextIO
 import qualified System.IO as IO
 
@@ -33,10 +34,18 @@ data Handle
 data LogLevel
     = Debug
     | Info
-    | Warning
-    | Error
+    | Warn
+    | Err
     | Topmost
-    deriving (Ord, Eq, Show)
+    deriving (Ord, Eq)
+
+
+instance Show LogLevel where
+    show Debug   = "DEBUG"
+    show Info    = "INFO "
+    show Warn    = "WARN "
+    show Err     = "ERROR"
+    show Topmost = "TOP  "
 
 
 debug :: Handle -> Text -> IO ()
@@ -48,11 +57,11 @@ info h = send h Info
 
 
 warn :: Handle -> Text -> IO ()
-warn h = send h Warning
+warn h = send h Warn
 
 
 err :: Handle -> Text -> IO ()
-err h = send h Error
+err h = send h Err
 
 
 {--}
@@ -99,8 +108,18 @@ new path = do
 withStdLogger :: (Handle -> IO r) -> IO r
 withStdLogger body = do
     body $ Handle
-        { send = \level text -> do
-            TextIO.putStrLn $ pack (show level) <> ": " <> text }
+        { send = sendStd }
+
+
+sendStd :: LogLevel -> Text -> IO ()
+sendStd level text = do
+    case level of
+        Debug -> setSGR [SetColor Foreground Dull Yellow]
+        Warn -> setSGR [SetColor Foreground Vivid Yellow]
+        Err -> setSGR [SetColor Foreground Vivid Red]
+        _ -> return ()
+    TextIO.putStrLn $ pack (show level) <> ": " <> text
+    setSGR [Reset]
 
 
 {--}

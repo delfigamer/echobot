@@ -21,12 +21,14 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - aeson >= 1.4 && < 2
+- ansi-terminal >= 0.10 && < 1
 - base >= 4.7 && < 5
 - bytestring >= 0.10 && < 1
 - hspec >= 2.7.2 && < 3
 - hspec-expectations >= 0.8.2 && < 1
 - req >= 3.2 && < 4
 - text >= 1.2 && < 2
+- unordered-containers >= 0.2.10 && < 1
 
 library:
   source-dirs: src

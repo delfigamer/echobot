@@ -1,11 +1,13 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
 
 module Channel.Tg.Internal
     ( Config(..)
+    , withTgChannel
     , TgChannel(..)
     , tgcNew
     , tgcPoll
@@ -15,9 +17,13 @@ module Channel.Tg.Internal
 import Control.Applicative
 import Control.Monad
 import Data.Aeson
+import Data.Aeson.Text
 import Data.IORef
 import Data.Maybe
 import Data.Text (Text)
+import qualified Data.HashMap.Strict as HashMap
+import qualified Data.Text as Text
+import qualified Data.Text.Lazy as TextLazy
 import qualified Channel
 import qualified Logger
 import qualified WebDriver
@@ -26,20 +32,26 @@ import qualified WebDriver
 data Config
     = Config
         { cToken :: Text
-        , cTimeout :: Int }
+        , cTimeout :: Int
+        , cKeyboardWidth :: Int }
 
 
 withTgChannel :: Config -> Logger.Handle -> WebDriver.Handle -> (Channel.Handle -> IO r) -> IO r
 withTgChannel conf logger driver body = do
     tgc <- tgcNew conf logger driver
     body $ Channel.Handle
-        { Channel.poll = tgcPoll tgc }
+        { Channel.poll = tgcPoll tgc
+        , Channel.sendMessage = tgcSendMessage tgc
+        , Channel.sendSticker = tgcSendSticker tgc
+        , Channel.updateMessage = tgcUpdateMessage tgc
+        , Channel.answerQuery = undefined }
 
 
 data TgChannel
     = TgChannel
         { tgcToken :: Text
         , tgcTimeout :: Int
+        , tgcKeyboardWidth :: Int
         , tgcLogger :: Logger.Handle
         , tgcDriver :: WebDriver.Handle
         , tgcOffset :: IORef Integer }
@@ -51,6 +63,7 @@ tgcNew conf logger driver = do
     return $ TgChannel
         { tgcToken = cToken conf
         , tgcTimeout = cTimeout conf
+        , tgcKeyboardWidth = cKeyboardWidth conf
         , tgcLogger = logger
         , tgcDriver = driver
         , tgcOffset = poffset }
@@ -59,73 +72,283 @@ tgcNew conf logger driver = do
 tgcPoll :: TgChannel -> IO [Channel.Event]
 tgcPoll tgc = do
     oldoffset <- readIORef (tgcOffset tgc)
+    Logger.debug (tgcLogger tgc) $
+        "TgChannel: Current update offset: " <> Text.pack (show oldoffset)
+    Logger.info (tgcLogger tgc) $
+        "TgChannel: Poll..."
     let offsetopt = if oldoffset < 0
-        then id
-        else (("offset" .= oldoffset):)
+        then []
+        else ["offset" .= oldoffset]
     resp <- WebDriver.request (tgcDriver tgc)
         (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "getUpdates"])
-        (object $ offsetopt ["timeout" .= tgcTimeout tgc])
+        (object $ offsetopt <> ["timeout" .= tgcTimeout tgc])
     case resp of
-        TgResponseOk tgevents -> do
+        TgResponseOk tgupdates -> do
+            Logger.info (tgcLogger tgc) $
+                "TgChannel: Response received"
             let newoffset = maximum $
                     oldoffset
-                    :map (\(TgEvent myoffset _) -> myoffset + 1) tgevents
+                    :map (\tgu -> tguOffset tgu + 1) tgupdates
             writeIORef (tgcOffset tgc) $! newoffset
-            return $ catMaybes $ map (\(TgEvent _ myev) -> myev) tgevents
+            Logger.debug (tgcLogger tgc) $
+                "TgChannel: New update offset: " <> Text.pack (show newoffset)
+            events <- forM tgupdates $ \tgu -> do
+                case tgu of
+                    TgMessage _ msgv -> do
+                        case fromJSON msgv of
+                            Success (TgEventMessage ev) -> do
+                                return $ [ev]
+                            Error e -> do
+                                Logger.warn (tgcLogger tgc) $
+                                    "TgChannel: " <> Text.pack e
+                                Logger.warn (tgcLogger tgc) $
+                                    "TgChannel: Unknown message type:"
+                                case msgv of
+                                    Object v -> do
+                                        Logger.warn (tgcLogger tgc) $
+                                            "TgChannel: \t(w/fields) " <> Text.pack (show (HashMap.keys v))
+                                    _ -> do
+                                        Logger.warn (tgcLogger tgc) $
+                                            "TgChannel: \t" <> Text.pack (show msgv)
+                                return $ []
+                    TgQuery _ queryv -> do
+                        case fromJSON queryv of
+                            Success (TgEventQuery ev) -> do
+                                return $ [ev]
+                            Error e -> do
+                                Logger.warn (tgcLogger tgc) $
+                                    "TgChannel: " <> Text.pack e
+                                Logger.warn (tgcLogger tgc) $
+                                    "TgChannel: Unknown callback query type:"
+                                case queryv of
+                                    Object v -> do
+                                        Logger.warn (tgcLogger tgc) $
+                                            "TgChannel: \t(w/fields) " <> Text.pack (show (HashMap.keys v))
+                                    _ -> do
+                                        Logger.warn (tgcLogger tgc) $
+                                            "TgChannel: \t" <> Text.pack (show queryv)
+                                return $ []
+                    TgUnknown _ fields -> do
+                        Logger.info (tgcLogger tgc) $
+                            "TgChannel: Unknown update type:"
+                        Logger.info (tgcLogger tgc) $
+                            "TgChannel: \t(w/fields) " <> Text.pack (show fields)
+                        return $ []
+            return $ join $ events
         TgResponseErr e -> do
-            undefined
+            Logger.err (tgcLogger tgc) $
+                "TgChannel: Request failed: " <> e
+            if oldoffset >= 0
+                then do
+                    Logger.info (tgcLogger tgc) $
+                        "TgChannel: Maybe because of invalid offset? Clear it and try again"
+                    writeIORef (tgcOffset tgc) $! -1
+                    return $ []
+                else do
+                    Logger.info (tgcLogger tgc) $
+                        "TgChannel: Nothing we can do, shut down the channel"
+                    fail "Telegram API error"
 
 
-data TgResponse
-    = TgResponseOk [TgEvent]
+tgcSendMessage
+    :: TgChannel
+    -> Channel.ChatId
+    -> Text
+    -> [Channel.QueryButton]
+    -> IO (Either Text Channel.MessageId)
+tgcSendMessage tgc chatId text buttons = do
+    Logger.info (tgcLogger tgc) $
+        "TgChannel: Send message"
+    Logger.debug (tgcLogger tgc) $
+        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show text)
+    Logger.debug (tgcLogger tgc) $
+        "TgChannel: \t" <> Text.pack (show buttons)
+    resp <- WebDriver.request (tgcDriver tgc)
+        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "sendMessage"])
+        (object $
+            [ "chat_id" .= chatId
+            , "text" .= text
+            ] <> keyboardMarkupOpt (tgcKeyboardWidth tgc) buttons)
+    case resp of
+        TgResponseOk (TgSentMessageId messageId) -> do
+            Logger.debug (tgcLogger tgc) $
+                "TgChannel: Message sent: " <> Text.pack (show messageId)
+            return $ Right messageId
+        TgResponseErr e -> do
+            Logger.err (tgcLogger tgc) $
+                "TgChannel: Message sending failed: " <> e
+            return $ Left e
+
+
+tgcSendSticker
+    :: TgChannel
+    -> Channel.ChatId
+    -> Channel.StickerName
+    -> IO (Either Text ())
+tgcSendSticker tgc chatId sticker = do
+    Logger.info (tgcLogger tgc) $
+        "TgChannel: Send sticker"
+    Logger.debug (tgcLogger tgc) $
+        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show sticker)
+    resp <- WebDriver.request (tgcDriver tgc)
+        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "sendSticker"])
+        (object
+            [ "chat_id" .= chatId
+            , "sticker" .= sticker
+            ])
+    case resp of
+        TgResponseOk (TgVoid _) -> do
+            Logger.debug (tgcLogger tgc) $
+                "TgChannel: Sticker sent"
+            return $ Right ()
+        TgResponseErr e -> do
+            Logger.err (tgcLogger tgc) $
+                "TgChannel: Sticker sending failed: " <> e
+            return $ Left e
+
+
+tgcUpdateMessage
+    :: TgChannel
+    -> Channel.ChatId
+    -> Channel.MessageId
+    -> Text
+    -> [Channel.QueryButton]
+    -> IO (Either Text ())
+tgcUpdateMessage tgc chatId messageId text buttons = do
+    Logger.info (tgcLogger tgc) $
+        "TgChannel: Update message"
+    Logger.debug (tgcLogger tgc) $
+        "TgChannel: \t" <> Text.pack (show chatId) <> " <- "  <> Text.pack (show messageId) <> " <- " <> Text.pack (show text)
+    Logger.debug (tgcLogger tgc) $
+        "TgChannel: \t" <> Text.pack (show buttons)
+    resp <- WebDriver.request (tgcDriver tgc)
+        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "editMessageText"])
+        (object $
+            [ "chat_id" .= chatId
+            , "message_id" .= messageId
+            , "text" .= text
+            ] <> keyboardMarkupOpt (tgcKeyboardWidth tgc) buttons)
+    case resp of
+        TgResponseOk (TgVoid _) -> do
+            Logger.debug (tgcLogger tgc) $
+                "TgChannel: Message updated"
+            return $ Right ()
+        TgResponseErr e -> do
+            Logger.err (tgcLogger tgc) $
+                "TgChannel: Message update failed: " <> e
+            return $ Left e
+
+
+keyboardMarkupOpt :: KeyValue kv => Int -> [Channel.QueryButton] -> [kv]
+keyboardMarkupOpt _ [] = []
+keyboardMarkupOpt kbwidth buttons = do
+    let buttonvalues = map
+            (\(Channel.QueryButton title userdata) -> do
+                object
+                    [ "text" .= title
+                    , "callback_data" .= userdata ])
+            buttons
+    let value = object ["inline_keyboard" .= sectionList kbwidth buttonvalues]
+    ["reply_markup" .= TextLazy.toStrict (encodeToLazyText value)]
+    where
+    sectionList len xs = do
+        case splitAt len xs of
+            (_, []) -> [xs]
+            (h, r) -> h:sectionList len r
+
+
+data TgResponse a
+    = TgResponseOk a
     | TgResponseErr Text
-    deriving (Show)
 
 
-data TgEvent = TgEvent !Integer (Maybe Channel.Event)
-    deriving (Show)
+data TgUpdate
+    = TgMessage
+        { tguOffset :: !Integer
+        , tguMessage :: !Value }
+    | TgQuery
+        { tguOffset :: !Integer
+        , tguQuery :: !Value }
+    | TgUnknown
+        { tguOffset :: !Integer
+        , tguSourceFields :: [Text] }
 
 
-instance FromJSON TgResponse where
+instance FromJSON a => FromJSON (TgResponse a) where
     parseJSON = withObject "TgResponse" $ \v -> do
         isOk <- v .: "ok"
         if isOk
-            then do
-                TgResponseOk
-                    <$> v .: "result"
-            else do
-                TgResponseErr
-                    <$> v .: "description"
+            then TgResponseOk <$> v .: "result"
+            else TgResponseErr <$> v .: "description"
 
 
-instance FromJSON TgEvent where
+instance FromJSON TgUpdate where
     parseJSON = withObject "TgEvent" $ \v -> do
         updateId <- v .: "update_id"
-        event <- optional $ parseEventMsg v
-        return $ TgEvent updateId event
+        msum
+            [ TgMessage updateId <$> v .: "message"
+            , TgQuery updateId <$> v .: "callback_query"
+            , return $ TgUnknown updateId (HashMap.keys v) ]
+
+
+newtype TgEventMessage = TgEventMessage Channel.Event
+
+
+instance FromJSON TgEventMessage where
+    parseJSON = withObject "TgMessage" $ \m -> do
+        chatId <- m .: "chat" >>= (.: "id")
+        parseMsgSticker chatId m <|> parseMsgText chatId m
         where
-        parseEventMsg v = (v .: "message" >>=) $ withObject "Event" $ \e -> do
-            chatId <- e .: "chat" >>= (.: "id")
-            fromId <- e .: "from" >>= (.: "id")
-            message <- parseMsgSticker e <|> parseMsgText e
-            return $ Channel.EventMessage
+        parseMsgSticker chatId m = do
+            sticker <- m .: "sticker" >>= (.: "file_id")
+            return $ TgEventMessage $ Channel.EventSticker
                 { Channel.eChatId = chatId
-                , Channel.eFromId = fromId
-                , Channel.eMessage = message }
-        parseMsgSticker e = do
-            Channel.MessageSticker
-                <$> (e .: "sticker" >>= (.: "file_id"))
-        parseMsgText e = do
-            Channel.MessageText
-                <$> (e .: "text")
+                , Channel.eSticker = sticker }
+        parseMsgText chatId m = do
+            messageId <- m .: "message_id"
+            text <- m .: "text"
+            return $ TgEventMessage $ Channel.EventMessage
+                { Channel.eChatId = chatId
+                , Channel.eMessageId = messageId
+                , Channel.eMessage = text }
+
+
+newtype TgEventQuery = TgEventQuery Channel.Event
+
+
+instance FromJSON TgEventQuery where
+    parseJSON = withObject "TgCallbackQuery" $ \e -> do
+        queryId <- e .: "id"
+        userdata <- e .: "data"
+        (e .: "message" >>=) $ withObject "TgMessage" $ \m -> do
+            chatId <- m .: "chat" >>= (.: "id")
+            messageId <- m .: "message_id"
+            return $ TgEventQuery $ Channel.EventQuery
+                { Channel.eChatId = chatId
+                , Channel.eMessageId = messageId
+                , Channel.eQueryId = queryId
+                , Channel.eUserdata = userdata }
+
+
+newtype TgSentMessageId = TgSentMessageId Channel.MessageId
+
+
+instance FromJSON TgSentMessageId where
+    parseJSON = withObject "TgSentMessage" $ \v -> do
+        TgSentMessageId <$> v .: "message_id"
+
+
+newtype TgVoid = TgVoid ()
+
+
+instance FromJSON TgVoid where
+    parseJSON _ = return $ TgVoid ()
 
 
 -- tt :: Text -> IO ()
 -- tt token = do
     -- Logger.withStdLogger $ \logger -> do
         -- WebDriver.withWebDriver logger $ \driver -> do
-            -- tgc <- tgcNew token logger driver
-            -- tgcPoll tgc >>= print
-            -- tgcPoll tgc >>= print
-            -- tgcPoll tgc >>= print
-            -- return ()
+            -- withTgChannel (Config token 60) logger driver $ \channel -> do
+                -- forever $ do
+                    -- Channel.poll channel >>= print

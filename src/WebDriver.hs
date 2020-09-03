@@ -16,8 +16,10 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Aeson
+import Data.Aeson.Text
 import Network.HTTP.Req
 import qualified Data.Text as Text
+import qualified Data.Text.Lazy as TextLazy
 import qualified System.IO as IO
 import qualified Logger
 
@@ -53,9 +55,10 @@ instance MonadHttp HttpIO where
 
 webRequest :: (ToJSON a, FromJSON b) => Logger.Handle -> Address -> a -> IO b
 webRequest logger (HttpsAddress root nodes) params = do
-    Logger.info logger $ "Send request to " <> root
+    Logger.info logger $
+        "WebDriver: Send request to " <> root
     Logger.debug logger $
-        "\t" <> Text.pack (show (toJSON params))
+        "WebDriver: \t" <> encodeToText params
     resp <- runHttpIO $ req
         POST
         (foldl (/:) (https root) nodes)
@@ -64,13 +67,19 @@ webRequest logger (HttpsAddress root nodes) params = do
         mempty
     let value = responseBody resp :: Value
     Logger.info logger $
-        "Response received"
+        "WebDriver: Response received"
     Logger.debug logger $
-        "\t" <> Text.pack (show value)
+        "WebDriver: \t" <> encodeToText value
     case fromJSON value of
         Success x -> do
-            Logger.debug logger $ "Response successfully parsed"
+            Logger.debug logger $
+                "WebDriver: Response successfully parsed"
             return $ x
         Error e -> do
-            Logger.err logger $ "Response failed to parse: " <> Text.pack e
+            Logger.err logger $
+                "WebDriver: Response failed to parse: " <> Text.pack e
             throwIO $ JsonHttpException e
+
+
+encodeToText :: ToJSON a => a -> Text.Text
+encodeToText = TextLazy.toStrict . encodeToLazyText

@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 3c762248eef2532933962cc502fca76c7aae6549272aa8936a9a77e18ccd1933
+-- hash: 0dbadc6694a25c7156041a104c63e39058bdfd40a8d63d388854d59c023ff0e3
 
 name:           EchoBot
 version:        0.1.0.0
@@ -32,6 +32,7 @@ library
       Channel.Tg.Internal
       Lib
       Logger
+      Responder
       WebDriver
   other-modules:
       Paths_EchoBot
@@ -39,12 +40,14 @@ library
       src
   build-depends:
       aeson >=1.4 && <2
+    , ansi-terminal >=0.10 && <1
     , base >=4.7 && <5
     , bytestring >=0.10 && <1
     , hspec >=2.7.2 && <3
     , hspec-expectations >=0.8.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
+    , unordered-containers >=0.2.10 && <1
   default-language: Haskell2010
 
 executable EchoBot-exe
@@ -57,19 +60,21 @@ executable EchoBot-exe
   build-depends:
       EchoBot
     , aeson >=1.4 && <2
+    , ansi-terminal >=0.10 && <1
     , base >=4.7 && <5
     , bytestring >=0.10 && <1
     , hspec >=2.7.2 && <3
     , hspec-expectations >=0.8.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
+    , unordered-containers >=0.2.10 && <1
   default-language: Haskell2010
 
 test-suite EchoBot-test
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
-      Channel.Tg.InternalSpec
+      Channel.TgSpec
       Paths_EchoBot
   hs-source-dirs:
       test
@@ -77,10 +82,12 @@ test-suite EchoBot-test
   build-depends:
       EchoBot
     , aeson >=1.4 && <2
+    , ansi-terminal >=0.10 && <1
     , base >=4.7 && <5
     , bytestring >=0.10 && <1
     , hspec >=2.7.2 && <3
     , hspec-expectations >=0.8.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
+    , unordered-containers >=0.2.10 && <1
   default-language: Haskell2010
