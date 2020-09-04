@@ -49,4 +49,4 @@ data Handle
         , sendMessage :: ChatId -> Text -> [QueryButton] -> IO (Either Text MessageId)
         , sendSticker :: ChatId -> StickerName -> IO (Either Text ())
         , updateMessage :: ChatId -> MessageId -> Text -> [QueryButton] -> IO (Either Text ())
-        , answerQuery :: QueryId -> QueryUserdata -> IO (Either Text ()) }
+        , answerQuery :: QueryId -> Text -> IO (Either Text ()) }

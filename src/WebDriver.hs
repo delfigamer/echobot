@@ -43,23 +43,13 @@ withWebDriver logger body = do
         { request = webRequest logger }
 
 
-newtype HttpIO t
-    = HttpIO
-        { runHttpIO :: IO t }
-    deriving (Functor, Applicative, Monad, MonadIO)
-
-
-instance MonadHttp HttpIO where
-    handleHttpException = HttpIO . throwIO
-
-
 webRequest :: (ToJSON a, FromJSON b) => Logger.Handle -> Address -> a -> IO b
 webRequest logger (HttpsAddress root nodes) params = do
     Logger.info logger $
         "WebDriver: Send request to " <> root
     Logger.debug logger $
         "WebDriver: \t" <> encodeToText params
-    resp <- runHttpIO $ req
+    resp <- runReq defaultHttpConfig $ req
         POST
         (foldl (/:) (https root) nodes)
         (ReqBodyJson $ params)

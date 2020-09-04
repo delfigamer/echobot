@@ -44,7 +44,7 @@ withTgChannel conf logger driver body = do
         , Channel.sendMessage = tgcSendMessage tgc
         , Channel.sendSticker = tgcSendSticker tgc
         , Channel.updateMessage = tgcUpdateMessage tgc
-        , Channel.answerQuery = undefined }
+        , Channel.answerQuery = tgcAnswerQuery tgc }
 
 
 data TgChannel
@@ -236,6 +236,32 @@ tgcUpdateMessage tgc chatId messageId text buttons = do
         TgResponseErr e -> do
             Logger.err (tgcLogger tgc) $
                 "TgChannel: Message update failed: " <> e
+            return $ Left e
+
+
+tgcAnswerQuery
+    :: TgChannel
+    -> Channel.QueryId
+    -> Text
+    -> IO (Either Text ())
+tgcAnswerQuery tgc queryId text = do
+    Logger.info (tgcLogger tgc) $
+        "TgChannel: Answer query"
+    Logger.debug (tgcLogger tgc) $
+        "TgChannel: \t" <> Text.pack (show queryId) <> " <- " <> Text.pack (show text)
+    resp <- WebDriver.request (tgcDriver tgc)
+        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "answerCallbackQuery"])
+        (if Text.null text
+            then object ["callback_query_id" .= queryId]
+            else object ["callback_query_id" .= queryId, "text" .= text])
+    case resp of
+        TgResponseOk (TgVoid _) -> do
+            Logger.debug (tgcLogger tgc) $
+                "TgChannel: Query answered"
+            return $ Right ()
+        TgResponseErr e -> do
+            Logger.err (tgcLogger tgc) $
+                "TgChannel: Query answer failed: " <> e
             return $ Left e
 
 

@@ -289,7 +289,7 @@ spec = do
                                 ])
                             (object
                                 [ "ok" .= True
-                                , "result" .= (Nothing :: Maybe ())
+                                , "result" .= True
                                 ])
                             (Channel.sendSticker channel 100 "sticker")
                             (Right ())
@@ -318,7 +318,7 @@ spec = do
                                 ])
                             (object
                                 [ "ok" .= True
-                                , "result" .= (Nothing :: Maybe ())
+                                , "result" .= True
                                 ])
                             (Channel.updateMessage channel 100 600 "updated message" [])
                             (Right ())
@@ -389,7 +389,7 @@ spec = do
                                 ])
                             (object
                                 [ "ok" .= True
-                                , "result" .= (Nothing :: Maybe ())
+                                , "result" .= True
                                 ])
                             (Channel.updateMessage channel 100 600 "updated message"
                                 [ Channel.QueryButton "t1" "u1"
@@ -467,7 +467,42 @@ spec = do
                             (Channel.poll channel)
                             [ Channel.EventQuery 110 510 "qid5" "qdata5"
                             ]
-        it "answers button queries" $ do
+        it "sends answers to button queries" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \phandler driver -> do
-                    pending
+                    Tg.withTgChannel conf logger driver $ \channel -> do
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "answerCallbackQuery"])
+                            (object
+                                [ "callback_query_id" .= ("qid1" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= True
+                                ])
+                            (Channel.answerQuery channel "qid1" "")
+                            (Right ())
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "answerCallbackQuery"])
+                            (object
+                                [ "callback_query_id" .= ("qid2" :: Text)
+                                , "text" .= ("sample text" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= True
+                                ])
+                            (Channel.answerQuery channel "qid2" "sample text")
+                            (Right ())
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "answerCallbackQuery"])
+                            (object
+                                [ "callback_query_id" .= ("qid3" :: Text)
+                                , "text" .= ("sample text 3" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= False
+                                , "description" .= ("err" :: Text)
+                                ])
+                            (Channel.answerQuery channel "qid3" "sample text 3")
+                            (Left "err")

@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 0dbadc6694a25c7156041a104c63e39058bdfd40a8d63d388854d59c023ff0e3
+-- hash: bec123e460a954d00e1956004378312ec449f48a3f1335ae454747ae177f32fa
 
 name:           EchoBot
 version:        0.1.0.0
@@ -43,11 +43,13 @@ library
     , ansi-terminal >=0.10 && <1
     , base >=4.7 && <5
     , bytestring >=0.10 && <1
+    , hashtables >=1.2.3 && <2
     , hspec >=2.7.2 && <3
     , hspec-expectations >=0.8.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
     , unordered-containers >=0.2.10 && <1
+    , yaml >=0.11.5 && <1
   default-language: Haskell2010
 
 executable EchoBot-exe
@@ -63,11 +65,13 @@ executable EchoBot-exe
     , ansi-terminal >=0.10 && <1
     , base >=4.7 && <5
     , bytestring >=0.10 && <1
+    , hashtables >=1.2.3 && <2
     , hspec >=2.7.2 && <3
     , hspec-expectations >=0.8.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
     , unordered-containers >=0.2.10 && <1
+    , yaml >=0.11.5 && <1
   default-language: Haskell2010
 
 test-suite EchoBot-test
@@ -75,6 +79,7 @@ test-suite EchoBot-test
   main-is: Spec.hs
   other-modules:
       Channel.TgSpec
+      ResponderSpec
       Paths_EchoBot
   hs-source-dirs:
       test
@@ -85,9 +90,11 @@ test-suite EchoBot-test
     , ansi-terminal >=0.10 && <1
     , base >=4.7 && <5
     , bytestring >=0.10 && <1
+    , hashtables >=1.2.3 && <2
     , hspec >=2.7.2 && <3
     , hspec-expectations >=0.8.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
     , unordered-containers >=0.2.10 && <1
+    , yaml >=0.11.5 && <1
   default-language: Haskell2010

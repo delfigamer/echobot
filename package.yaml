@@ -24,11 +24,13 @@ dependencies:
 - ansi-terminal >= 0.10 && < 1
 - base >= 4.7 && < 5
 - bytestring >= 0.10 && < 1
+- hashtables >= 1.2.3 && < 2
 - hspec >= 2.7.2 && < 3
 - hspec-expectations >= 0.8.2 && < 1
 - req >= 3.2 && < 4
 - text >= 1.2 && < 2
 - unordered-containers >= 0.2.10 && < 1
+- yaml >= 0.11.5 && < 1
 
 library:
   source-dirs: src
