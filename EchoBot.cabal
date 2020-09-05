@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: bec123e460a954d00e1956004378312ec449f48a3f1335ae454747ae177f32fa
+-- hash: 430ca8adbf4441ba2e48667c1d1c063cdbc86f97ae642b0161ed41e58bb7ed55
 
 name:           EchoBot
 version:        0.1.0.0
@@ -29,10 +29,9 @@ library
   exposed-modules:
       Channel
       Channel.Tg
-      Channel.Tg.Internal
-      Lib
       Logger
       Responder
+      Responder.Repeat
       WebDriver
   other-modules:
       Paths_EchoBot
@@ -79,7 +78,7 @@ test-suite EchoBot-test
   main-is: Spec.hs
   other-modules:
       Channel.TgSpec
-      ResponderSpec
+      Responder.RepeatSpec
       Paths_EchoBot
   hs-source-dirs:
       test

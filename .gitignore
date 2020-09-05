@@ -1,0 +1,5 @@
+.*
+*~
+*.log
+config.yaml
+!.gitignore

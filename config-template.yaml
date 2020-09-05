@@ -1,0 +1,68 @@
+# This is a configuration template
+# To get started, copy this file, rename it "config.yaml" and fill in the bot's token
+
+
+# The list of places that will receive the program log
+# Possible values:
+# - "null" # drops all messages
+# - "std" # prints messages into the standard output
+# - file: "filename" # appends messages to the specified file
+# The default is a singular "std"
+logger:
+  - "std"
+  - file: "EchoBot.log"
+
+
+# Each submodule can be given individual verbosity level
+# Possible verbosity levels, in decreasing order:
+# "debug" > "info" > "warn" > "err" > "none"
+# The default is to output everything ("debug")
+web-log-level: "debug"
+channel-log-level: "debug"
+responder-log-level: "debug"
+
+
+# Chosen front-end for the bot
+# Currently, only Telegram ("tg") is supported
+channel:
+  tg:
+    # The bot token, including the word "bot" in front of it
+    # -------------------- This field must be set!  --------------------
+    token: "bot1234567890:ABCDEFGHIJKL__mnopqrstuvwxyz0123456"
+    # Timeout for the long polling, in seconds
+    # The default is 60
+    timeout: 60
+    # Maximum number of buttons in a single row of a keyboard
+    # When the back-end sends more buttons than this value, they are broken into multiple rows
+    # The default is 5
+    keyboard-width: 5
+
+
+# Chosen back-end for the bot
+# Only "repeat" is supported
+responder:
+  repeat:
+    # The starting multiplier, used for chats where no explicit setting was made
+    # The default is 3
+    default-multiplier: 3
+    # This message is sent when the bot is given an unknown command
+    unknown-command-msg: "Неизвестная команда. Чтобы получить список доступных комманд, отправьте /help"
+    # The command to print the description of the bot
+    # This command simply sends the message below
+    # The default is "/help"
+    describe-cmd: "/help"
+    # This message is sent in response to the above command
+    # In this message, %1 stands for the current multiplier in the current chat
+    describe-msg: "Этот бот повторяет отправленные ему сообщения указанное число раз\nТекущий множитель: %1\n/repeat - установить новый множитель"
+    # The command to inspect and change the current multiplier
+    # This command sends the message below, together with a set of buttons from 1 to max-multiplier, which would set the new multiplier upon clicking
+    # The default is "/repeat"
+    inspect-multiplier-cmd: "/repeat"
+    # This message is sent in response to the above command
+    # In this message, %1 stands for the current multiplier in the current chat
+    inspect-multiplier-msg: "Текущий множитель: %1\nВыберите новый множитель из списка ниже:"
+    # Once a new multiplier is set, the message above is replaced with this one, and the keyboard is removed
+    multiplier-set-msg: "Текущий множитель установлен: %1"
+    # This is the maximum multiplier that the bot allows to set
+    # The default is 5
+    max-multiplier: 5

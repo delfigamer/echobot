@@ -4,7 +4,7 @@
 {-# LANGUAGE RankNTypes #-}
 
 
-module ResponderSpec
+module Responder.RepeatSpec
     ( spec
     ) where
 
@@ -25,6 +25,7 @@ import qualified System.IO as IO
 import qualified Channel
 import qualified Logger
 import qualified Responder
+import qualified Responder.Repeat
 
 
 data ExpectedAction
@@ -105,18 +106,22 @@ oneWork pevents pactions responder events actions = do
 
 spec :: Spec
 spec = do
-    describe "Responder" $ do
+    describe "Responder.Repeat" $ do
         let unknownCmdMsg = "unknown command"
+        let describeCmd = "/help"
+        let describeMsg s = "this is help " <> s
         let inspectMultiplierCmd = "/repeat"
         let inspectMultiplierMsg s = "repeat is " <> s
         let multiplierSetMsg s = "repeat set to " <> s
-        let config = Responder.Config
-                { Responder.cDefaultMultiplier = 2
-                , Responder.cUnknownCommandMsg = unknownCmdMsg
-                , Responder.cInspectMultiplierCmd = inspectMultiplierCmd
-                , Responder.cInspectMultiplierMsg = inspectMultiplierMsg "%1"
-                , Responder.cMultiplierSetMsg = multiplierSetMsg "%1"
-                , Responder.cMaxMultiplier = 4 }
+        let config = Responder.Repeat.Config
+                { Responder.Repeat.cDefaultMultiplier = 2
+                , Responder.Repeat.cUnknownCommandMsg = unknownCmdMsg
+                , Responder.Repeat.cDescribeCmd = describeCmd
+                , Responder.Repeat.cDescribeMsg = describeMsg "%1"
+                , Responder.Repeat.cInspectMultiplierCmd = inspectMultiplierCmd
+                , Responder.Repeat.cInspectMultiplierMsg = inspectMultiplierMsg "%1"
+                , Responder.Repeat.cMultiplierSetMsg = multiplierSetMsg "%1"
+                , Responder.Repeat.cMaxMultiplier = 4 }
         let inspectButtons =
                 [ Channel.QueryButton "1" "r1"
                 , Channel.QueryButton "2" "r2"
@@ -126,7 +131,7 @@ spec = do
         it "repeats messages" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestChannel $ \pevents pactions channel -> do
-                    Responder.withEchoResponder config logger channel $ \responder -> do
+                    Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
                         oneWork pevents pactions responder
                             [ Channel.EventMessage 105 600 "some text"
                             ]
@@ -145,7 +150,7 @@ spec = do
         it "detects unknown commands" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestChannel $ \pevents pactions channel -> do
-                    Responder.withEchoResponder config logger channel $ \responder -> do
+                    Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
                         oneWork pevents pactions responder
                             [ Channel.EventMessage 105 601 "/unknown-command"
                             ]
@@ -162,7 +167,7 @@ spec = do
         it "allows to change the multiplier" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestChannel $ \pevents pactions channel -> do
-                    Responder.withEchoResponder config logger channel $ \responder -> do
+                    Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
                         oneWork pevents pactions responder
                             [ Channel.EventMessage 105 601 inspectMultiplierCmd
                             ]
@@ -184,7 +189,7 @@ spec = do
         it "keeps individual multipliers for each chat" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestChannel $ \pevents pactions channel -> do
-                    Responder.withEchoResponder config logger channel $ \responder -> do
+                    Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
                         oneWork pevents pactions responder
                             [ Channel.EventMessage 100 11 inspectMultiplierCmd
                             , Channel.EventMessage 200 21 inspectMultiplierCmd
@@ -231,4 +236,29 @@ spec = do
                             , SendMessage 500 (inspectMultiplierMsg "2") inspectButtons (Right 101)
                             , SendMessage 200 (inspectMultiplierMsg "2") inspectButtons (Right 101)
                             , SendMessage 300 (inspectMultiplierMsg "3") inspectButtons (Right 101)
+                            ]
+        it "describes itself" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestChannel $ \pevents pactions channel -> do
+                    Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
+                        oneWork pevents pactions responder
+                            [ Channel.EventMessage 100 11 describeCmd
+                            ]
+                            [ SendMessage 100 (describeMsg "2") [] (Right 12)
+                            ]
+                        oneWork pevents pactions responder
+                            [ Channel.EventMessage 100 13 inspectMultiplierCmd
+                            ]
+                            [ SendMessage 100 (inspectMultiplierMsg "2") inspectButtons (Right 14)
+                            ]
+                        oneWork pevents pactions responder
+                            [ Channel.EventQuery 100 14 "qid1" "r4"
+                            ]
+                            [ AnswerQuery "qid1" "" (Right ())
+                            , UpdateMessage 100 14 (multiplierSetMsg "4") [] (Right ())
+                            ]
+                        oneWork pevents pactions responder
+                            [ Channel.EventMessage 100 15 describeCmd
+                            ]
+                            [ SendMessage 100 (describeMsg "4") [] (Right 16)
                             ]
