@@ -21,6 +21,7 @@ import Data.Text (Text)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy as TextLazy
+import qualified Data.Vector as Vector
 import qualified Channel
 import qualified Logger
 import qualified WebDriver
@@ -41,6 +42,8 @@ withTgChannel conf logger driver body = do
         { Channel.poll = tgcPoll tgc
         , Channel.sendMessage = tgcSendMessage tgc
         , Channel.sendSticker = tgcSendSticker tgc
+        , Channel.sendMedia = tgcSendMedia tgc
+        , Channel.sendMediaGroup = tgcSendMediaGroup tgc
         , Channel.updateMessage = tgcUpdateMessage tgc
         , Channel.answerQuery = tgcAnswerQuery tgc }
 
@@ -181,7 +184,7 @@ tgcSendMessage tgc chatId text buttons = do
 tgcSendSticker
     :: TgChannel
     -> Channel.ChatId
-    -> Channel.StickerName
+    -> Channel.FileId
     -> IO (Either Text ())
 tgcSendSticker tgc chatId sticker = do
     Logger.info (tgcLogger tgc) $
@@ -203,6 +206,23 @@ tgcSendSticker tgc chatId sticker = do
             Logger.err (tgcLogger tgc) $
                 "TgChannel: Sticker sending failed: " <> e
             return $ Left e
+
+
+tgcSendMedia
+    :: TgChannel
+    -> Channel.ChatId
+    -> Text
+    -> Channel.Media
+    -> IO (Either Text ())
+tgcSendMedia = undefined
+
+
+tgcSendMediaGroup
+    :: TgChannel
+    -> Channel.ChatId
+    -> Channel.MediaGroup
+    -> IO (Either Text ())
+tgcSendMediaGroup = undefined
 
 
 tgcUpdateMessage
@@ -321,13 +341,34 @@ newtype TgEventMessage = TgEventMessage Channel.Event
 instance FromJSON TgEventMessage where
     parseJSON = withObject "TgMessage" $ \m -> do
         chatId <- m .: "chat" >>= (.: "id")
-        parseMsgSticker chatId m <|> parseMsgText chatId m
+        msum
+            [ parseMsgSticker chatId m
+            , parseMsgMedia chatId m
+            , parseMsgText chatId m
+            ]
         where
         parseMsgSticker chatId m = do
             sticker <- m .: "sticker" >>= (.: "file_id")
             return $ TgEventMessage $ Channel.EventSticker
                 { Channel.eChatId = chatId
                 , Channel.eSticker = sticker }
+        parseMsgMedia chatId m = do
+            caption <- m .:? "caption" .!= ""
+            media <- msum
+                [ (m .: "photo" >>=) $ withArray "PhotoSizes" $ \sizes -> do
+                    Just size0 <- return $ sizes Vector.!? 0
+                    flip (withObject "Photo") size0 $ \photo -> do
+                        Channel.MediaPhoto <$> photo .: "file_id"
+                , Channel.MediaVideo <$> (m .: "video" >>= (.: "file_id"))
+                , Channel.MediaAudio <$> (m .: "audio" >>= (.: "file_id"))
+                , Channel.MediaAnimation <$> (m .: "animation" >>= (.: "file_id"))
+                , Channel.MediaVoice <$> (m .: "voice" >>= (.: "file_id"))
+                , Channel.MediaDocument <$> (m .: "document" >>= (.: "file_id"))
+                ]
+            return $ TgEventMessage $ Channel.EventMedia
+                { Channel.eChatId = chatId
+                , Channel.eCaption = caption
+                , Channel.eMedia = media }
         parseMsgText chatId m = do
             messageId <- m .: "message_id"
             text <- m .: "text"

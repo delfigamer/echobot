@@ -506,3 +506,110 @@ spec = do
                                 ])
                             (Channel.answerQuery channel "qid3" "sample text 3")
                             (Left "err")
+        it "receives media messages" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \phandler driver -> do
+                    Tg.withTgChannel conf logger driver $ \channel -> do
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
+                            (object ["timeout" .= timeout])
+                            (object
+                                [ "ok" .= True
+                                , "result" .=
+                                    [ object
+                                        [ "update_id" .= (1 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "photo" .=
+                                                [ object
+                                                    [ "file_id" .= ("photo 1" :: Text)
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (2 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "photo" .=
+                                                [ object
+                                                    [ "file_id" .= ("photo 2" :: Text)
+                                                    ]
+                                                ]
+                                            , "caption" .= ("caption 2" :: Text)
+                                            ]
+                                        ]
+                                    ]
+                                ])
+                            (Channel.poll channel)
+                            [ Channel.EventMedia 100 "" (Channel.MediaPhoto "photo 1")
+                            , Channel.EventMedia 100 "caption 2" (Channel.MediaPhoto "photo 2")
+                            ]
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
+                            (object ["offset" .= (3 :: Int), "timeout" .= timeout])
+                            (object
+                                [ "ok" .= True
+                                , "result" .=
+                                    [ object
+                                        [ "update_id" .= (3 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "video" .= object
+                                                [ "file_id" .= ("video id" :: Text)
+                                                ]
+                                            , "caption" .= ("video caption" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (4 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "audio" .= object
+                                                [ "file_id" .= ("audio id" :: Text)
+                                                ]
+                                            , "caption" .= ("audio caption" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (5 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "animation" .= object
+                                                [ "file_id" .= ("animation id" :: Text)
+                                                ]
+                                            , "document" .= object
+                                                [ "file_id" .= ("other id" :: Text)
+                                                ]
+                                            , "caption" .= ("animation caption" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (6 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "voice" .= object
+                                                [ "file_id" .= ("voice id" :: Text)
+                                                ]
+                                            , "caption" .= ("voice caption" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (7 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "document" .= object
+                                                [ "file_id" .= ("document id" :: Text)
+                                                ]
+                                            , "caption" .= ("document caption" :: Text)
+                                            ]
+                                        ]
+                                    ]
+                                ])
+                            (Channel.poll channel)
+                            [ Channel.EventMedia 100 "video caption" (Channel.MediaVideo "video id")
+                            , Channel.EventMedia 100 "audio caption" (Channel.MediaAudio "audio id")
+                            , Channel.EventMedia 100 "animation caption" (Channel.MediaAnimation "animation id")
+                            , Channel.EventMedia 100 "voice caption" (Channel.MediaVoice "voice id")
+                            , Channel.EventMedia 100 "document caption" (Channel.MediaDocument "document id")
+                            ]

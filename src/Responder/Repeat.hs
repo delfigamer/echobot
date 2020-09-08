@@ -28,6 +28,8 @@ data Config
     = Config
         { cDefaultMultiplier :: Int
         , cUnknownCommandMsg :: Text.Text
+        , cStartCmd :: Text.Text
+        , cStartMsg :: Text.Text
         , cDescribeCmd :: Text.Text
         , cDescribeMsg :: Text.Text
         , cInspectMultiplierCmd :: Text.Text
@@ -105,7 +107,7 @@ erRepeatMessage er chatId text = do
             Channel.sendMessage (erChannel er) chatId text []
 
 
-erRepeatSticker :: RepeatResponder -> Channel.ChatId -> Channel.StickerName -> IO ()
+erRepeatSticker :: RepeatResponder -> Channel.ChatId -> Channel.FileId -> IO ()
 erRepeatSticker er chatId sticker = do
     mult <- erGetMultiplier er chatId
     Logger.debug (erLogger er) $
@@ -117,6 +119,14 @@ erRepeatSticker er chatId sticker = do
 
 erHandleCommand :: RepeatResponder -> Channel.ChatId -> Text.Text -> IO ()
 erHandleCommand er chatId cmd
+    | Text.isPrefixOf (cStartCmd (erConfig er)) cmd = do
+        mult <- erGetMultiplier er chatId
+        Logger.debug (erLogger er) $
+            "Responder: requested start in " <> Text.pack (show chatId)
+        erMakeRequest er "sendMessage" $
+            Channel.sendMessage (erChannel er) chatId
+                (substitute [show mult] $ cStartMsg (erConfig er))
+                []
     | Text.isPrefixOf (cDescribeCmd (erConfig er)) cmd = do
         mult <- erGetMultiplier er chatId
         Logger.debug (erLogger er) $

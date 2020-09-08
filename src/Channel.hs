@@ -1,9 +1,12 @@
 module Channel
     ( ChatId
     , MessageId
-    , StickerName
+    , FileId
+    , MediaGroupId
     , QueryId
     , QueryUserdata
+    , MediaGroup(..)
+    , Media(..)
     , Event(..)
     , QueryButton(..)
     , Handle(..)
@@ -15,9 +18,27 @@ import Data.Text
 
 type ChatId = Integer
 type MessageId = Integer
-type StickerName = Text
+type FileId = Text
+type MediaGroupId = Text
 type QueryId = Text
 type QueryUserdata = Text
+
+
+data MediaGroup
+    = MediaGroupPhoto !Text !FileId !MediaGroup
+    | MediaGroupVideo !Text !FileId !MediaGroup
+    | MediaGroupLast
+    deriving (Show, Eq)
+
+
+data Media
+    = MediaPhoto !FileId
+    | MediaVideo !FileId
+    | MediaAudio !FileId
+    | MediaAnimation !FileId
+    | MediaVoice !FileId
+    | MediaDocument !FileId
+    deriving (Show, Eq)
 
 
 data Event
@@ -27,7 +48,15 @@ data Event
         , eMessage :: !Text }
     | EventSticker
         { eChatId :: !ChatId
-        , eSticker :: !StickerName }
+        , eSticker :: !FileId }
+    | EventMedia
+        { eChatId :: !ChatId
+        , eCaption :: !Text
+        , eMedia :: !Media }
+    | EventMediaGroup
+        { eChatId :: !ChatId
+        , eGroupId :: !MediaGroupId
+        , eGroup :: !MediaGroup }
     | EventQuery
         { eChatId :: !ChatId
         , eMessageId :: !MessageId
@@ -47,6 +76,8 @@ data Handle
     = Handle
         { poll :: IO [Event]
         , sendMessage :: ChatId -> Text -> [QueryButton] -> IO (Either Text MessageId)
-        , sendSticker :: ChatId -> StickerName -> IO (Either Text ())
+        , sendSticker :: ChatId -> FileId -> IO (Either Text ())
+        , sendMedia :: ChatId -> Text -> Media -> IO (Either Text ())
+        , sendMediaGroup :: ChatId -> MediaGroup -> IO (Either Text ())
         , updateMessage :: ChatId -> MessageId -> Text -> [QueryButton] -> IO (Either Text ())
         , answerQuery :: QueryId -> Text -> IO (Either Text ()) }

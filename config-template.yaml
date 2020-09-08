@@ -46,23 +46,37 @@ responder:
     # The default is 3
     default-multiplier: 3
     # This message is sent when the bot is given an unknown command
-    unknown-command-msg: "Неизвестная команда. Чтобы получить список доступных комманд, отправьте /help"
+    unknown-command-msg: |
+      Неизвестная команда. Чтобы получить список доступных комманд, отправьте /help
+    # The command to start chatting with the bot
+    # This command simply sends the message below
+    # The default is "/start"
+    start-cmd: /start
+    # This message is sent in response to the above command
+    # In this message, %1 stands for the current multiplier in the current chat
+    start-msg: &start-msg |
+      Этот бот повторяет отправленные ему сообщения указанное число раз
+      Текущий множитель: %1
+      /repeat - установить новый множитель
     # The command to print the description of the bot
     # This command simply sends the message below
     # The default is "/help"
-    describe-cmd: "/help"
+    describe-cmd: /help
     # This message is sent in response to the above command
     # In this message, %1 stands for the current multiplier in the current chat
-    describe-msg: "Этот бот повторяет отправленные ему сообщения указанное число раз\nТекущий множитель: %1\n/repeat - установить новый множитель"
+    describe-msg: *start-msg
     # The command to inspect and change the current multiplier
     # This command sends the message below, together with a set of buttons from 1 to max-multiplier, which would set the new multiplier upon clicking
     # The default is "/repeat"
-    inspect-multiplier-cmd: "/repeat"
+    inspect-multiplier-cmd: /repeat
     # This message is sent in response to the above command
     # In this message, %1 stands for the current multiplier in the current chat
-    inspect-multiplier-msg: "Текущий множитель: %1\nВыберите новый множитель из списка ниже:"
+    inspect-multiplier-msg: |
+      Текущий множитель: %1
+      Выберите новый множитель из списка ниже:
     # Once a new multiplier is set, the message above is replaced with this one, and the keyboard is removed
-    multiplier-set-msg: "Текущий множитель установлен: %1"
+    multiplier-set-msg: |
+      Текущий множитель установлен: %1
     # This is the maximum multiplier that the bot allows to set
     # The default is 5
     max-multiplier: 5

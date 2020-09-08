@@ -156,8 +156,10 @@ instance FromJSON ResponderConfig where
                 Responder.Repeat.Config
                     <$> v .:? "default-multiplier" .!= 2
                     <*> v .:? "unknown-command-msg" .!= "[responder.repeat.unknown-command-msg]"
+                    <*> v .:? "start-cmd" .!= "/start"
+                    <*> v .:? "start-msg" .!= "[responder.repeat.start-msg] %1"
                     <*> v .:? "describe-cmd" .!= "/help"
-                    <*> v .:? "describe-msg" .!= "[responder.repeat.describe-msg]"
+                    <*> v .:? "describe-msg" .!= "[responder.repeat.describe-msg] %1"
                     <*> v .:? "inspect-multiplier-cmd" .!= "/repeat"
                     <*> v .:? "inspect-multiplier-msg" .!= "[responder.repeat.inspect-multiplier-msg] %1"
                     <*> v .:? "multiplier-set-msg" .!= "[responder.repeat.multiplier-set-msg] %1"

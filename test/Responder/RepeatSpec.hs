@@ -30,7 +30,7 @@ import qualified Responder.Repeat
 
 data ExpectedAction
     = SendMessage Channel.ChatId Text [Channel.QueryButton] (Either Text Channel.MessageId)
-    | SendSticker Channel.ChatId Channel.StickerName (Either Text ())
+    | SendSticker Channel.ChatId Channel.FileId (Either Text ())
     | UpdateMessage Channel.ChatId Channel.MessageId Text [Channel.QueryButton] (Either Text ())
     | AnswerQuery Channel.QueryId Text (Either Text ())
     deriving (Show, Eq)
@@ -46,6 +46,8 @@ withTestChannel body = do
         { Channel.poll = testPoll pevents
         , Channel.sendMessage = testSendMessage pactions
         , Channel.sendSticker = testSendSticker pactions
+        , Channel.sendMedia = undefined
+        , Channel.sendMediaGroup = undefined
         , Channel.updateMessage = testUpdateMessage pactions
         , Channel.answerQuery = testAnswerQuery pactions }
 
@@ -65,7 +67,7 @@ testSendMessage pactions chatId text buttons = do
     return $ result
 
 
-testSendSticker :: IORef [ExpectedAction] -> Channel.ChatId -> Channel.StickerName -> IO (Either Text ())
+testSendSticker :: IORef [ExpectedAction] -> Channel.ChatId -> Channel.FileId -> IO (Either Text ())
 testSendSticker pactions chatId sticker = do
     SendSticker expchatId expsticker result:rest <- readIORef pactions
     writeIORef pactions $! rest
@@ -108,6 +110,8 @@ spec :: Spec
 spec = do
     describe "Responder.Repeat" $ do
         let unknownCmdMsg = "unknown command"
+        let startCmd = "/start"
+        let startMsg s = "i am started " <> s
         let describeCmd = "/help"
         let describeMsg s = "this is help " <> s
         let inspectMultiplierCmd = "/repeat"
@@ -116,6 +120,8 @@ spec = do
         let config = Responder.Repeat.Config
                 { Responder.Repeat.cDefaultMultiplier = 2
                 , Responder.Repeat.cUnknownCommandMsg = unknownCmdMsg
+                , Responder.Repeat.cStartCmd = startCmd
+                , Responder.Repeat.cStartMsg = startMsg "%1"
                 , Responder.Repeat.cDescribeCmd = describeCmd
                 , Responder.Repeat.cDescribeMsg = describeMsg "%1"
                 , Responder.Repeat.cInspectMultiplierCmd = inspectMultiplierCmd
@@ -236,6 +242,31 @@ spec = do
                             , SendMessage 500 (inspectMultiplierMsg "2") inspectButtons (Right 101)
                             , SendMessage 200 (inspectMultiplierMsg "2") inspectButtons (Right 101)
                             , SendMessage 300 (inspectMultiplierMsg "3") inspectButtons (Right 101)
+                            ]
+        it "starts itself" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestChannel $ \pevents pactions channel -> do
+                    Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
+                        oneWork pevents pactions responder
+                            [ Channel.EventMessage 100 11 startCmd
+                            ]
+                            [ SendMessage 100 (startMsg "2") [] (Right 12)
+                            ]
+                        oneWork pevents pactions responder
+                            [ Channel.EventMessage 100 13 inspectMultiplierCmd
+                            ]
+                            [ SendMessage 100 (inspectMultiplierMsg "2") inspectButtons (Right 14)
+                            ]
+                        oneWork pevents pactions responder
+                            [ Channel.EventQuery 100 14 "qid1" "r1"
+                            ]
+                            [ AnswerQuery "qid1" "" (Right ())
+                            , UpdateMessage 100 14 (multiplierSetMsg "1") [] (Right ())
+                            ]
+                        oneWork pevents pactions responder
+                            [ Channel.EventMessage 100 15 startCmd
+                            ]
+                            [ SendMessage 100 (startMsg "1") [] (Right 16)
                             ]
         it "describes itself" $ do
             Logger.withNullLogger $ \logger -> do

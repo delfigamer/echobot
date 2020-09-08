@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 430ca8adbf4441ba2e48667c1d1c063cdbc86f97ae642b0161ed41e58bb7ed55
+-- hash: faeabb61fbd03cd5d9841781a5d03a92da0ad21d632e5a24127b6abf0db0592a
 
 name:           EchoBot
 version:        0.1.0.0
@@ -48,6 +48,7 @@ library
     , req >=3.2 && <4
     , text >=1.2 && <2
     , unordered-containers >=0.2.10 && <1
+    , vector >=0.12 && <1
     , yaml >=0.11.5 && <1
   default-language: Haskell2010
 
@@ -70,6 +71,7 @@ executable EchoBot-exe
     , req >=3.2 && <4
     , text >=1.2 && <2
     , unordered-containers >=0.2.10 && <1
+    , vector >=0.12 && <1
     , yaml >=0.11.5 && <1
   default-language: Haskell2010
 
@@ -95,5 +97,6 @@ test-suite EchoBot-test
     , req >=3.2 && <4
     , text >=1.2 && <2
     , unordered-containers >=0.2.10 && <1
+    , vector >=0.12 && <1
     , yaml >=0.11.5 && <1
   default-language: Haskell2010
