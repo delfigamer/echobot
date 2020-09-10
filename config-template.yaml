@@ -9,17 +9,17 @@
 # - file: "filename" # appends messages to the specified file
 # The default is a singular "std"
 logger:
-  - "std"
-  - file: "EchoBot.log"
+  - std
+  - file: EchoBot.log
 
 
 # Each submodule can be given individual verbosity level
 # Possible verbosity levels, in decreasing order:
 # "debug" > "info" > "warn" > "err" > "none"
 # The default is to output everything ("debug")
-web-log-level: "debug"
-channel-log-level: "debug"
-responder-log-level: "debug"
+web-log-level: debug
+channel-log-level: debug
+responder-log-level: debug
 
 
 # Chosen front-end for the bot
@@ -28,7 +28,7 @@ channel:
   tg:
     # The bot token, including the word "bot" in front of it
     # -------------------- This field must be set!  --------------------
-    token: "bot1234567890:ABCDEFGHIJKL__mnopqrstuvwxyz0123456"
+    token: bot1234567890:ABCDEFGHIJKL__mnopqrstuvwxyz0123456
     # Timeout for the long polling, in seconds
     # The default is 60
     timeout: 60

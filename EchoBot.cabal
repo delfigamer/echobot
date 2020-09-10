@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: faeabb61fbd03cd5d9841781a5d03a92da0ad21d632e5a24127b6abf0db0592a
+-- hash: 72cf41b4513a9b6f0239cabad2cb65d1caad892d36122228dfd54aae77711e8e
 
 name:           EchoBot
 version:        0.1.0.0
@@ -47,6 +47,7 @@ library
     , hspec-expectations >=0.8.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
+    , time >=1.9 && <2
     , unordered-containers >=0.2.10 && <1
     , vector >=0.12 && <1
     , yaml >=0.11.5 && <1
@@ -70,6 +71,7 @@ executable EchoBot-exe
     , hspec-expectations >=0.8.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
+    , time >=1.9 && <2
     , unordered-containers >=0.2.10 && <1
     , vector >=0.12 && <1
     , yaml >=0.11.5 && <1
@@ -96,6 +98,7 @@ test-suite EchoBot-test
     , hspec-expectations >=0.8.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
+    , time >=1.9 && <2
     , unordered-containers >=0.2.10 && <1
     , vector >=0.12 && <1
     , yaml >=0.11.5 && <1

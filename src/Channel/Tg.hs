@@ -15,6 +15,7 @@ import Control.Applicative
 import Control.Monad
 import Data.Aeson
 import Data.Aeson.Text
+import Data.Either
 import Data.IORef
 import Data.Maybe
 import Data.Text (Text)
@@ -93,49 +94,8 @@ tgcPoll tgc = do
             writeIORef (tgcOffset tgc) $! newoffset
             Logger.debug (tgcLogger tgc) $
                 "TgChannel: New update offset: " <> Text.pack (show newoffset)
-            events <- forM tgupdates $ \tgu -> do
-                case tgu of
-                    TgMessage _ msgv -> do
-                        case fromJSON msgv of
-                            Success (TgEventMessage ev) -> do
-                                return $ [ev]
-                            Error e -> do
-                                Logger.warn (tgcLogger tgc) $
-                                    "TgChannel: " <> Text.pack e
-                                Logger.warn (tgcLogger tgc) $
-                                    "TgChannel: Unknown message type:"
-                                case msgv of
-                                    Object v -> do
-                                        Logger.warn (tgcLogger tgc) $
-                                            "TgChannel: \t(w/fields) " <> Text.pack (show (HashMap.keys v))
-                                    _ -> do
-                                        Logger.warn (tgcLogger tgc) $
-                                            "TgChannel: \t" <> Text.pack (show msgv)
-                                return $ []
-                    TgQuery _ queryv -> do
-                        case fromJSON queryv of
-                            Success (TgEventQuery ev) -> do
-                                return $ [ev]
-                            Error e -> do
-                                Logger.warn (tgcLogger tgc) $
-                                    "TgChannel: " <> Text.pack e
-                                Logger.warn (tgcLogger tgc) $
-                                    "TgChannel: Unknown callback query type:"
-                                case queryv of
-                                    Object v -> do
-                                        Logger.warn (tgcLogger tgc) $
-                                            "TgChannel: \t(w/fields) " <> Text.pack (show (HashMap.keys v))
-                                    _ -> do
-                                        Logger.warn (tgcLogger tgc) $
-                                            "TgChannel: \t" <> Text.pack (show queryv)
-                                return $ []
-                    TgUnknown _ fields -> do
-                        Logger.info (tgcLogger tgc) $
-                            "TgChannel: Unknown update type:"
-                        Logger.info (tgcLogger tgc) $
-                            "TgChannel: \t(w/fields) " <> Text.pack (show fields)
-                        return $ []
-            return $ join $ events
+            events <- parseUpdates tgupdates
+            return $ groupEvents events
         TgResponseErr e -> do
             Logger.err (tgcLogger tgc) $
                 "TgChannel: Request failed: " <> e
@@ -149,6 +109,73 @@ tgcPoll tgc = do
                     Logger.info (tgcLogger tgc) $
                         "TgChannel: Nothing we can do, shut down the channel"
                     fail "Telegram API error"
+    where
+    parseUpdates :: [TgUpdate] -> IO [Either Channel.Event TgGroupElem]
+    parseUpdates [] = return $ []
+    parseUpdates (tgu:rest) = do
+        case tgu of
+            TgMessage _ value -> do
+                    parseOrWarnOne "message" value
+                        (parseUpdates rest)
+                        $ \(TgEventMessage mgroupId ev) -> do
+                            (toGroupElem mgroupId ev:) <$> parseUpdates rest
+            TgQuery _ value -> do
+                parseOrWarnOne "callback query" value
+                    (parseUpdates rest)
+                    $ \(TgEventQuery ev) -> do
+                        (Left ev:) <$> parseUpdates rest
+            TgUnknown _ fields -> do
+                Logger.info (tgcLogger tgc) $
+                    "TgChannel: Unknown update type:"
+                Logger.info (tgcLogger tgc) $
+                    "TgChannel: \t(w/fields) " <> Text.pack (show fields)
+                parseUpdates rest
+
+    parseOrWarnOne :: FromJSON a => Text -> Value -> IO r -> (a -> IO r) -> IO r
+    parseOrWarnOne what value onError onSuccess = do
+        case fromJSON value of
+            Success x -> do
+                onSuccess x
+            Error e -> do
+                Logger.warn (tgcLogger tgc) $
+                    "TgChannel: " <> Text.pack e
+                Logger.warn (tgcLogger tgc) $
+                    "TgChannel: Unknown " <> what <> " type:"
+                case value of
+                    Object v -> do
+                        Logger.warn (tgcLogger tgc) $
+                            "TgChannel: \t(w/fields) " <> Text.pack (show (HashMap.keys v))
+                    Array _ -> do
+                        Logger.warn (tgcLogger tgc) $
+                            "TgChannel: \t(array)"
+                    _ -> do
+                        Logger.warn (tgcLogger tgc) $
+                            "TgChannel: \t" <> Text.pack (show value)
+                onError
+
+
+groupEvents :: [Either Channel.Event TgGroupElem] -> [Channel.Event]
+groupEvents [] = []
+groupEvents (Left ev:rest) = ev:groupEvents rest
+groupEvents (Right (TgGroupElem groupId chatId elem):rest) = takeGroup groupId chatId elem rest
+
+
+takeGroup :: Channel.MediaGroupId -> Channel.ChatId -> (Channel.MediaGroup -> Channel.MediaGroup) -> [Either Channel.Event TgGroupElem] -> [Channel.Event]
+takeGroup groupId chatId elem rest = do
+    case rest of
+        Right (TgGroupElem groupId2 chatId2 elem2):rest2
+            | groupId == groupId2
+            , chatId == chatId2 -> do
+                takeGroup groupId chatId (elem . elem2) rest2
+        _ -> do
+            let mine = Channel.EventMediaGroup chatId groupId (elem Channel.MediaGroupEnd)
+            mine:groupEvents rest
+
+
+toGroupElem :: Maybe Channel.MediaGroupId -> Channel.Event -> Either Channel.Event TgGroupElem
+toGroupElem (Just groupId) (Channel.EventMedia chatId caption (Channel.MediaPhoto fileId)) = Right $ TgGroupElem groupId chatId $ Channel.MediaGroupPhoto caption fileId
+toGroupElem (Just groupId) (Channel.EventMedia chatId caption (Channel.MediaVideo fileId)) = Right $ TgGroupElem groupId chatId $ Channel.MediaGroupVideo caption fileId
+toGroupElem _ ev = Left ev
 
 
 tgcSendMessage
@@ -214,7 +241,45 @@ tgcSendMedia
     -> Text
     -> Channel.Media
     -> IO (Either Text ())
-tgcSendMedia = undefined
+tgcSendMedia tgc chatId caption media = do
+    Logger.info (tgcLogger tgc) $
+        "TgChannel: Send media"
+    Logger.debug (tgcLogger tgc) $
+        "TgChannel: \t" <> Text.pack (show chatId) <> " <- "  <> Text.pack (show caption)
+    Logger.debug (tgcLogger tgc) $
+        "TgChannel: \t" <> Text.pack (show media)
+    resp <- WebDriver.request (tgcDriver tgc)
+        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, mediaRequestAddress media])
+        (object $
+            [ "chat_id" .= chatId
+            ] <> mediaRequestData media <> mediaCaptionOpt caption)
+    case resp of
+        TgResponseOk (TgVoid _) -> do
+            Logger.debug (tgcLogger tgc) $
+                "TgChannel: Media sent"
+            return $ Right ()
+        TgResponseErr e -> do
+            Logger.err (tgcLogger tgc) $
+                "TgChannel: Media sending failed: " <> e
+            return $ Left e
+
+
+mediaRequestAddress :: Channel.Media -> Text
+mediaRequestAddress (Channel.MediaPhoto _) = "sendPhoto"
+mediaRequestAddress (Channel.MediaVideo _) = "sendVideo"
+mediaRequestAddress (Channel.MediaAudio _) = "sendAudio"
+mediaRequestAddress (Channel.MediaAnimation _) = "sendAnimation"
+mediaRequestAddress (Channel.MediaVoice _) = "sendVoice"
+mediaRequestAddress (Channel.MediaDocument _) = "sendDocument"
+
+
+mediaRequestData :: KeyValue kv => Channel.Media -> [kv]
+mediaRequestData (Channel.MediaPhoto fileId) = ["photo" .= fileId]
+mediaRequestData (Channel.MediaVideo fileId) = ["video" .= fileId]
+mediaRequestData (Channel.MediaAudio fileId) = ["audio" .= fileId]
+mediaRequestData (Channel.MediaAnimation fileId) = ["animation" .= fileId]
+mediaRequestData (Channel.MediaVoice fileId) = ["voice" .= fileId]
+mediaRequestData (Channel.MediaDocument fileId) = ["document" .= fileId]
 
 
 tgcSendMediaGroup
@@ -222,7 +287,42 @@ tgcSendMediaGroup
     -> Channel.ChatId
     -> Channel.MediaGroup
     -> IO (Either Text ())
-tgcSendMediaGroup = undefined
+tgcSendMediaGroup tgc chatId group = do
+    Logger.info (tgcLogger tgc) $
+        "TgChannel: Send media group"
+    Logger.debug (tgcLogger tgc) $
+        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show group)
+    resp <- WebDriver.request (tgcDriver tgc)
+        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "sendMediaGroup"])
+        (object $
+            [ "chat_id" .= chatId
+            , "media" .= encodeMedia group
+            ])
+    case resp of
+        TgResponseOk (TgVoid _) -> do
+            Logger.debug (tgcLogger tgc) $
+                "TgChannel: Media group sent"
+            return $ Right ()
+        TgResponseErr e -> do
+            Logger.err (tgcLogger tgc) $
+                "TgChannel: Media group sending failed: " <> e
+            return $ Left e
+
+
+encodeMedia :: Channel.MediaGroup -> [Value]
+encodeMedia (Channel.MediaGroupPhoto caption fileId next) = do
+    (object $
+        [ "type" .= ("photo" :: Text)
+        , "media" .= fileId
+        ] <> mediaCaptionOpt caption)
+    :encodeMedia next
+encodeMedia (Channel.MediaGroupVideo caption fileId next) = do
+    (object $
+        [ "type" .= ("video" :: Text)
+        , "media" .= fileId
+        ] <> mediaCaptionOpt caption)
+    :encodeMedia next
+encodeMedia Channel.MediaGroupEnd = []
 
 
 tgcUpdateMessage
@@ -236,7 +336,7 @@ tgcUpdateMessage tgc chatId messageId text buttons = do
     Logger.info (tgcLogger tgc) $
         "TgChannel: Update message"
     Logger.debug (tgcLogger tgc) $
-        "TgChannel: \t" <> Text.pack (show chatId) <> " <- "  <> Text.pack (show messageId) <> " <- " <> Text.pack (show text)
+        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show messageId) <> " <- " <> Text.pack (show text)
     Logger.debug (tgcLogger tgc) $
         "TgChannel: \t" <> Text.pack (show buttons)
     resp <- WebDriver.request (tgcDriver tgc)
@@ -301,18 +401,27 @@ keyboardMarkupOpt kbwidth buttons = do
             (h, r) -> h:sectionList len r
 
 
+mediaCaptionOpt :: KeyValue kv => Text -> [kv]
+mediaCaptionOpt "" = []
+mediaCaptionOpt caption = ["caption" .= caption]
+
+
 data TgResponse a
     = TgResponseOk a
     | TgResponseErr Text
 
 
+data TgGroupElem
+    = TgGroupElem Channel.MediaGroupId Channel.ChatId (Channel.MediaGroup -> Channel.MediaGroup)
+
+
 data TgUpdate
     = TgMessage
         { tguOffset :: !Integer
-        , tguMessage :: !Value }
+        , tguValue :: !Value }
     | TgQuery
         { tguOffset :: !Integer
-        , tguQuery :: !Value }
+        , tguValue :: !Value }
     | TgUnknown
         { tguOffset :: !Integer
         , tguSourceFields :: [Text] }
@@ -335,24 +444,25 @@ instance FromJSON TgUpdate where
             , return $ TgUnknown updateId (HashMap.keys v) ]
 
 
-newtype TgEventMessage = TgEventMessage Channel.Event
+data TgEventMessage = TgEventMessage (Maybe Channel.MediaGroupId) Channel.Event
 
 
 instance FromJSON TgEventMessage where
     parseJSON = withObject "TgMessage" $ \m -> do
         chatId <- m .: "chat" >>= (.: "id")
+        mgroupId <- m .:? "media_group_id"
         msum
-            [ parseMsgSticker chatId m
-            , parseMsgMedia chatId m
-            , parseMsgText chatId m
+            [ parseMsgSticker chatId mgroupId m
+            , parseMsgMedia chatId mgroupId m
+            , parseMsgText chatId mgroupId m
             ]
         where
-        parseMsgSticker chatId m = do
+        parseMsgSticker chatId mgroupId m = do
             sticker <- m .: "sticker" >>= (.: "file_id")
-            return $ TgEventMessage $ Channel.EventSticker
+            return $ TgEventMessage mgroupId $ Channel.EventSticker
                 { Channel.eChatId = chatId
                 , Channel.eSticker = sticker }
-        parseMsgMedia chatId m = do
+        parseMsgMedia chatId mgroupId m = do
             caption <- m .:? "caption" .!= ""
             media <- msum
                 [ (m .: "photo" >>=) $ withArray "PhotoSizes" $ \sizes -> do
@@ -365,17 +475,32 @@ instance FromJSON TgEventMessage where
                 , Channel.MediaVoice <$> (m .: "voice" >>= (.: "file_id"))
                 , Channel.MediaDocument <$> (m .: "document" >>= (.: "file_id"))
                 ]
-            return $ TgEventMessage $ Channel.EventMedia
+            return $ TgEventMessage mgroupId $ Channel.EventMedia
                 { Channel.eChatId = chatId
                 , Channel.eCaption = caption
                 , Channel.eMedia = media }
-        parseMsgText chatId m = do
+        parseMsgText chatId mgroupId m = do
             messageId <- m .: "message_id"
             text <- m .: "text"
-            return $ TgEventMessage $ Channel.EventMessage
+            return $ TgEventMessage mgroupId $ Channel.EventMessage
                 { Channel.eChatId = chatId
                 , Channel.eMessageId = messageId
                 , Channel.eMessage = text }
+
+
+newtype TgEventGroupElem = TgEventGroupElem (Channel.MediaGroup -> Channel.MediaGroup)
+
+
+instance FromJSON TgEventGroupElem where
+    parseJSON = withObject "TgGroupElem" $ \m -> do
+        caption <- m .:? "caption" .!= ""
+        msum
+            [ (m .: "photo" >>=) $ withArray "PhotoSizes" $ \sizes -> do
+                Just size0 <- return $ sizes Vector.!? 0
+                flip (withObject "Photo") size0 $ \photo -> do
+                    (TgEventGroupElem . Channel.MediaGroupPhoto caption) <$> photo .: "file_id"
+            , (TgEventGroupElem . Channel.MediaGroupVideo caption) <$> (m .: "video" >>= (.: "file_id"))
+            ]
 
 
 newtype TgEventQuery = TgEventQuery Channel.Event

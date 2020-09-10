@@ -363,7 +363,8 @@ spec = do
                                 [ Channel.QueryButton "t1" "u1"
                                 , Channel.QueryButton "t2" "u2"
                                 , Channel.QueryButton "t3" "u3"
-                                , Channel.QueryButton "t4" "u4" ])
+                                , Channel.QueryButton "t4" "u4"
+                                ])
                             (Right 600)
         it "updates messages with buttons" $ do
             Logger.withNullLogger $ \logger -> do
@@ -396,7 +397,8 @@ spec = do
                                 , Channel.QueryButton "t2" "u2"
                                 , Channel.QueryButton "t3" "u3"
                                 , Channel.QueryButton "t4" "u4"
-                                , Channel.QueryButton "t5" "u5" ])
+                                , Channel.QueryButton "t5" "u5"
+                                ])
                             (Right ())
         it "receives button events" $ do
             Logger.withNullLogger $ \logger -> do
@@ -521,9 +523,7 @@ spec = do
                                         , "message" .= object
                                             [ "chat" .= object ["id" .= (100 :: Int)]
                                             , "photo" .=
-                                                [ object
-                                                    [ "file_id" .= ("photo 1" :: Text)
-                                                    ]
+                                                [ object ["file_id" .= ("photo 1" :: Text)]
                                                 ]
                                             ]
                                         ]
@@ -532,9 +532,7 @@ spec = do
                                         , "message" .= object
                                             [ "chat" .= object ["id" .= (100 :: Int)]
                                             , "photo" .=
-                                                [ object
-                                                    [ "file_id" .= ("photo 2" :: Text)
-                                                    ]
+                                                [ object ["file_id" .= ("photo 2" :: Text)]
                                                 ]
                                             , "caption" .= ("caption 2" :: Text)
                                             ]
@@ -555,9 +553,7 @@ spec = do
                                         [ "update_id" .= (3 :: Int)
                                         , "message" .= object
                                             [ "chat" .= object ["id" .= (100 :: Int)]
-                                            , "video" .= object
-                                                [ "file_id" .= ("video id" :: Text)
-                                                ]
+                                            , "video" .= object ["file_id" .= ("video id" :: Text)]
                                             , "caption" .= ("video caption" :: Text)
                                             ]
                                         ]
@@ -565,9 +561,7 @@ spec = do
                                         [ "update_id" .= (4 :: Int)
                                         , "message" .= object
                                             [ "chat" .= object ["id" .= (100 :: Int)]
-                                            , "audio" .= object
-                                                [ "file_id" .= ("audio id" :: Text)
-                                                ]
+                                            , "audio" .= object ["file_id" .= ("audio id" :: Text)]
                                             , "caption" .= ("audio caption" :: Text)
                                             ]
                                         ]
@@ -575,12 +569,8 @@ spec = do
                                         [ "update_id" .= (5 :: Int)
                                         , "message" .= object
                                             [ "chat" .= object ["id" .= (100 :: Int)]
-                                            , "animation" .= object
-                                                [ "file_id" .= ("animation id" :: Text)
-                                                ]
-                                            , "document" .= object
-                                                [ "file_id" .= ("other id" :: Text)
-                                                ]
+                                            , "animation" .= object ["file_id" .= ("animation id" :: Text)]
+                                            , "document" .= object ["file_id" .= ("other id" :: Text)]
                                             , "caption" .= ("animation caption" :: Text)
                                             ]
                                         ]
@@ -588,9 +578,7 @@ spec = do
                                         [ "update_id" .= (6 :: Int)
                                         , "message" .= object
                                             [ "chat" .= object ["id" .= (100 :: Int)]
-                                            , "voice" .= object
-                                                [ "file_id" .= ("voice id" :: Text)
-                                                ]
+                                            , "voice" .= object ["file_id" .= ("voice id" :: Text)]
                                             , "caption" .= ("voice caption" :: Text)
                                             ]
                                         ]
@@ -598,18 +586,260 @@ spec = do
                                         [ "update_id" .= (7 :: Int)
                                         , "message" .= object
                                             [ "chat" .= object ["id" .= (100 :: Int)]
-                                            , "document" .= object
-                                                [ "file_id" .= ("document id" :: Text)
-                                                ]
+                                            , "document" .= object ["file_id" .= ("document id" :: Text)]
                                             , "caption" .= ("document caption" :: Text)
                                             ]
                                         ]
                                     ]
                                 ])
                             (Channel.poll channel)
-                            [ Channel.EventMedia 100 "video caption" (Channel.MediaVideo "video id")
-                            , Channel.EventMedia 100 "audio caption" (Channel.MediaAudio "audio id")
-                            , Channel.EventMedia 100 "animation caption" (Channel.MediaAnimation "animation id")
-                            , Channel.EventMedia 100 "voice caption" (Channel.MediaVoice "voice id")
-                            , Channel.EventMedia 100 "document caption" (Channel.MediaDocument "document id")
+                            [ Channel.EventMedia 100 "video caption" $ Channel.MediaVideo "video id"
+                            , Channel.EventMedia 100 "audio caption" $ Channel.MediaAudio "audio id"
+                            , Channel.EventMedia 100 "animation caption" $ Channel.MediaAnimation "animation id"
+                            , Channel.EventMedia 100 "voice caption" $ Channel.MediaVoice "voice id"
+                            , Channel.EventMedia 100 "document caption" $ Channel.MediaDocument "document id"
                             ]
+        it "receives media group messages" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \phandler driver -> do
+                    Tg.withTgChannel conf logger driver $ \channel -> do
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
+                            (object ["timeout" .= timeout])
+                            (object
+                                [ "ok" .= True
+                                , "result" .=
+                                    [ object
+                                        [ "update_id" .= (1 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "photo" .=
+                                                [ object ["file_id" .= ("photo 1" :: Text)]
+                                                ]
+                                            , "caption" .= ("caption 1" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (2 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "photo" .=
+                                                [ object ["file_id" .= ("photo 2" :: Text)]
+                                                ]
+                                            , "caption" .= ("caption 2" :: Text)
+                                            , "media_group_id" .= ("group id" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (3 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "photo" .=
+                                                [ object ["file_id" .= ("photo 3" :: Text)]
+                                                ]
+                                            , "media_group_id" .= ("group id" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (4 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "video" .= object ["file_id" .= ("video 4" :: Text)]
+                                            , "caption" .= ("caption 4" :: Text)
+                                            , "media_group_id" .= ("group id" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (5 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "video" .= object ["file_id" .= ("video 5" :: Text)]
+                                            , "caption" .= ("caption 5" :: Text)
+                                            , "media_group_id" .= ("group id 2" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (6 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "video" .= object ["file_id" .= ("video 6" :: Text)]
+                                            , "caption" .= ("caption 6" :: Text)
+                                            , "media_group_id" .= ("group id 2" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (7 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (200 :: Int)]
+                                            , "video" .= object ["file_id" .= ("video 7" :: Text)]
+                                            , "caption" .= ("caption 7" :: Text)
+                                            , "media_group_id" .= ("group id 2" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (8 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (200 :: Int)]
+                                            , "video" .= object ["file_id" .= ("video 8" :: Text)]
+                                            , "caption" .= ("caption 8" :: Text)
+                                            , "media_group_id" .= ("group id 2" :: Text)
+                                            ]
+                                        ]
+                                    , object
+                                        [ "update_id" .= (5 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "photo" .=
+                                                [ object ["file_id" .= ("photo 9" :: Text)]
+                                                ]
+                                            , "caption" .= ("caption 9" :: Text)
+                                            ]
+                                        ]
+                                    ]
+                                ])
+                            (Channel.poll channel)
+                            [ Channel.EventMedia 100 "caption 1" $ Channel.MediaPhoto "photo 1"
+                            , Channel.EventMediaGroup 100 "group id"
+                                $ Channel.MediaGroupPhoto "caption 2" "photo 2"
+                                $ Channel.MediaGroupPhoto "" "photo 3"
+                                $ Channel.MediaGroupVideo "caption 4" "video 4"
+                                $ Channel.MediaGroupEnd
+                            , Channel.EventMediaGroup 100 "group id 2"
+                                $ Channel.MediaGroupVideo "caption 5" "video 5"
+                                $ Channel.MediaGroupVideo "caption 6" "video 6"
+                                $ Channel.MediaGroupEnd
+                            , Channel.EventMediaGroup 200 "group id 2"
+                                $ Channel.MediaGroupVideo "caption 7" "video 7"
+                                $ Channel.MediaGroupVideo "caption 8" "video 8"
+                                $ Channel.MediaGroupEnd
+                            , Channel.EventMedia 100 "caption 9" $ Channel.MediaPhoto "photo 9"
+                            ]
+        it "sends media" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \phandler driver -> do
+                    Tg.withTgChannel conf logger driver $ \channel -> do
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendPhoto"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "photo" .= ("photo 1" :: Text)
+                                , "caption" .= ("caption 1" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= True
+                                ])
+                            (Channel.sendMedia channel 100 "caption 1" (Channel.MediaPhoto "photo 1"))
+                            (Right ())
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendVideo"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "video" .= ("video 2" :: Text)
+                                , "caption" .= ("caption 2" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= True
+                                ])
+                            (Channel.sendMedia channel 100 "caption 2" (Channel.MediaVideo "video 2"))
+                            (Right ())
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendAudio"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "audio" .= ("audio 3" :: Text)
+                                , "caption" .= ("caption 3" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= True
+                                ])
+                            (Channel.sendMedia channel 100 "caption 3" (Channel.MediaAudio "audio 3"))
+                            (Right ())
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendAnimation"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "animation" .= ("animation 4" :: Text)
+                                , "caption" .= ("caption 4" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= True
+                                ])
+                            (Channel.sendMedia channel 100 "caption 4" (Channel.MediaAnimation "animation 4"))
+                            (Right ())
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendVoice"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "voice" .= ("voice 5" :: Text)
+                                , "caption" .= ("caption 5" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= True
+                                ])
+                            (Channel.sendMedia channel 100 "caption 5" (Channel.MediaVoice "voice 5"))
+                            (Right ())
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendDocument"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "document" .= ("document 6" :: Text)
+                                , "caption" .= ("caption 6" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= True
+                                ])
+                            (Channel.sendMedia channel 100 "caption 6" (Channel.MediaDocument "document 6"))
+                            (Right ())
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendPhoto"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "photo" .= ("photo 7" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= True
+                                ])
+                            (Channel.sendMedia channel 100 "" (Channel.MediaPhoto "photo 7"))
+                            (Right ())
+        it "sends media groups" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \phandler driver -> do
+                    Tg.withTgChannel conf logger driver $ \channel -> do
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMediaGroup"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "media" .=
+                                    [ object
+                                        [ "type" .= ("photo" :: Text)
+                                        , "media" .= ("photo 1" :: Text)
+                                        ]
+                                    , object
+                                        [ "type" .= ("photo" :: Text)
+                                        , "media" .= ("photo 2" :: Text)
+                                        , "caption" .= ("caption 2" :: Text)
+                                        ]
+                                    , object
+                                        [ "type" .= ("video" :: Text)
+                                        , "media" .= ("video 3" :: Text)
+                                        , "caption" .= ("caption 3" :: Text)
+                                        ]
+                                    ]
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= True
+                                ])
+                            (Channel.sendMediaGroup channel 100
+                                $ Channel.MediaGroupPhoto "" "photo 1"
+                                $ Channel.MediaGroupPhoto "caption 2" "photo 2"
+                                $ Channel.MediaGroupVideo "caption 3" "video 3"
+                                $ Channel.MediaGroupEnd)
+                            (Right ())

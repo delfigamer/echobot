@@ -27,7 +27,7 @@ type QueryUserdata = Text
 data MediaGroup
     = MediaGroupPhoto !Text !FileId !MediaGroup
     | MediaGroupVideo !Text !FileId !MediaGroup
-    | MediaGroupLast
+    | MediaGroupEnd
     deriving (Show, Eq)
 
 

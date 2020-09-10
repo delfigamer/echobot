@@ -31,6 +31,8 @@ import qualified Responder.Repeat
 data ExpectedAction
     = SendMessage Channel.ChatId Text [Channel.QueryButton] (Either Text Channel.MessageId)
     | SendSticker Channel.ChatId Channel.FileId (Either Text ())
+    | SendMedia Channel.ChatId Text Channel.Media (Either Text ())
+    | SendMediaGroup Channel.ChatId Channel.MediaGroup (Either Text ())
     | UpdateMessage Channel.ChatId Channel.MessageId Text [Channel.QueryButton] (Either Text ())
     | AnswerQuery Channel.QueryId Text (Either Text ())
     deriving (Show, Eq)
@@ -46,8 +48,8 @@ withTestChannel body = do
         { Channel.poll = testPoll pevents
         , Channel.sendMessage = testSendMessage pactions
         , Channel.sendSticker = testSendSticker pactions
-        , Channel.sendMedia = undefined
-        , Channel.sendMediaGroup = undefined
+        , Channel.sendMedia = testSendMedia pactions
+        , Channel.sendMediaGroup = testSendMediaGroup pactions
         , Channel.updateMessage = testUpdateMessage pactions
         , Channel.answerQuery = testAnswerQuery pactions }
 
@@ -72,6 +74,22 @@ testSendSticker pactions chatId sticker = do
     SendSticker expchatId expsticker result:rest <- readIORef pactions
     writeIORef pactions $! rest
     (chatId, sticker) `shouldBe` (expchatId, expsticker)
+    return $ result
+
+
+testSendMedia :: IORef [ExpectedAction] -> Channel.ChatId -> Text -> Channel.Media -> IO (Either Text ())
+testSendMedia pactions chatId caption media = do
+    SendMedia expchatId expcaption expmedia result:rest <- readIORef pactions
+    writeIORef pactions $! rest
+    (chatId, caption, media) `shouldBe` (expchatId, expcaption, expmedia)
+    return $ result
+
+
+testSendMediaGroup :: IORef [ExpectedAction] -> Channel.ChatId -> Channel.MediaGroup -> IO (Either Text ())
+testSendMediaGroup pactions chatId group = do
+    SendMediaGroup expchatId expgroup result:rest <- readIORef pactions
+    writeIORef pactions $! rest
+    (chatId, group) `shouldBe` (expchatId, expgroup)
     return $ result
 
 
@@ -292,4 +310,45 @@ spec = do
                             [ Channel.EventMessage 100 15 describeCmd
                             ]
                             [ SendMessage 100 (describeMsg "4") [] (Right 16)
+                            ]
+        it "repeats stickers" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestChannel $ \pevents pactions channel -> do
+                    Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
+                        oneWork pevents pactions responder
+                            [ Channel.EventSticker 100 "sticker 100"
+                            , Channel.EventSticker 200 "sticker 200"
+                            ]
+                            [ SendSticker 100 "sticker 100" (Right ())
+                            , SendSticker 100 "sticker 100" (Right ())
+                            , SendSticker 200 "sticker 200" (Right ())
+                            , SendSticker 200 "sticker 200" (Right ())
+                            ]
+        it "repeats media" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestChannel $ \pevents pactions channel -> do
+                    Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
+                        oneWork pevents pactions responder
+                            [ Channel.EventMedia 100 "" $ Channel.MediaPhoto "photo 100"
+                            , Channel.EventMedia 100 "caption 1" $ Channel.MediaPhoto "photo 100 b"
+                            , Channel.EventMedia 100 "caption 2" $ Channel.MediaVideo "video 100"
+                            , Channel.EventMedia 100 "caption 3" $ Channel.MediaAudio "audio 100"
+                            , Channel.EventMedia 100 "caption 4" $ Channel.MediaAnimation "anim 100"
+                            , Channel.EventMedia 100 "caption 5" $ Channel.MediaVoice "voice 100"
+                            , Channel.EventMedia 100 "caption 6" $ Channel.MediaDocument "doc 100"
+                            ]
+                            [ SendMedia 100 "" (Channel.MediaPhoto "photo 100") (Right ())
+                            , SendMedia 100 "" (Channel.MediaPhoto "photo 100") (Right ())
+                            , SendMedia 100 "caption 1" (Channel.MediaPhoto "photo 100 b") (Right ())
+                            , SendMedia 100 "caption 1" (Channel.MediaPhoto "photo 100 b") (Right ())
+                            , SendMedia 100 "caption 2" (Channel.MediaVideo "video 100") (Right ())
+                            , SendMedia 100 "caption 2" (Channel.MediaVideo "video 100") (Right ())
+                            , SendMedia 100 "caption 3" (Channel.MediaAudio "audio 100") (Right ())
+                            , SendMedia 100 "caption 3" (Channel.MediaAudio "audio 100") (Right ())
+                            , SendMedia 100 "caption 4" (Channel.MediaAnimation "anim 100") (Right ())
+                            , SendMedia 100 "caption 4" (Channel.MediaAnimation "anim 100") (Right ())
+                            , SendMedia 100 "caption 5" (Channel.MediaVoice "voice 100") (Right ())
+                            , SendMedia 100 "caption 5" (Channel.MediaVoice "voice 100") (Right ())
+                            , SendMedia 100 "caption 6" (Channel.MediaDocument "doc 100") (Right ())
+                            , SendMedia 100 "caption 6" (Channel.MediaDocument "doc 100") (Right ())
                             ]

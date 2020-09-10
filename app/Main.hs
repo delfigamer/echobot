@@ -27,9 +27,12 @@ main = do
     hSetEncoding stdout encoding2
     ac <- decodeFileThrow "config.yaml"
     withLogger (acLogger ac) $ \logger -> do
-        WebDriver.withWebDriver logger $ \driver -> do
-            withChannel (acChannel ac) logger driver $ \channel -> do
-                withResponder (acResponder ac) logger channel $ \responder -> do
+        let driverlogger = Logger.loggerFilter (logLevel $ acWebDriverLogLevel ac) logger
+        WebDriver.withWebDriver driverlogger $ \driver -> do
+            let channellogger = Logger.loggerFilter (logLevel $ acChannelLogLevel ac) logger
+            withChannel (acChannel ac) channellogger driver $ \channel -> do
+                let responderlogger = Logger.loggerFilter (logLevel $ acResponderLogLevel ac) logger
+                withResponder (acResponder ac) responderlogger channel $ \responder -> do
                     catch
                         (forever $ Responder.work responder)
                         (logFatal logger)

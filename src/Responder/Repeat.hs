@@ -82,6 +82,10 @@ erHandleEvent er (Channel.EventMessage chatId _ text) = do
         else erRepeatMessage er chatId text
 erHandleEvent er (Channel.EventSticker chatId sticker) = do
     erRepeatSticker er chatId sticker
+erHandleEvent er (Channel.EventMedia chatId caption media) = do
+    erRepeatMedia er chatId caption media
+erHandleEvent er (Channel.EventMediaGroup chatId _ group) = do
+    erRepeatMediaGroup er chatId group
 erHandleEvent er (Channel.EventQuery chatId messageId queryId userdata) = do
     erMakeRequest er "answerQuery" $
         Channel.answerQuery (erChannel er) queryId ""
@@ -115,6 +119,26 @@ erRepeatSticker er chatId sticker = do
     replicateM_ mult $ do
         erMakeRequest er "sendSticker" $
             Channel.sendSticker (erChannel er) chatId sticker
+
+
+erRepeatMedia :: RepeatResponder -> Channel.ChatId -> Text.Text -> Channel.Media -> IO ()
+erRepeatMedia er chatId caption media = do
+    mult <- erGetMultiplier er chatId
+    Logger.debug (erLogger er) $
+        "Responder: repeat media into " <> Text.pack (show chatId) <> " " <> Text.pack (show mult) <> " times"
+    replicateM_ mult $ do
+        erMakeRequest er "sendMedia" $
+            Channel.sendMedia (erChannel er) chatId caption media
+
+
+erRepeatMediaGroup :: RepeatResponder -> Channel.ChatId -> Channel.MediaGroup -> IO ()
+erRepeatMediaGroup er chatId group = do
+    mult <- erGetMultiplier er chatId
+    Logger.debug (erLogger er) $
+        "Responder: repeat a media group into " <> Text.pack (show chatId) <> " " <> Text.pack (show mult) <> " times"
+    replicateM_ mult $ do
+        erMakeRequest er "sendMediaGroup" $
+            Channel.sendMediaGroup (erChannel er) chatId group
 
 
 erHandleCommand :: RepeatResponder -> Channel.ChatId -> Text.Text -> IO ()

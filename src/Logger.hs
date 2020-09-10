@@ -20,7 +20,9 @@ module Logger
 
 import Control.Exception
 import Control.Monad
-import Data.Text
+import Data.Text (Text, pack)
+import Data.Time.Clock (getCurrentTime)
+import Data.Time.Format (formatTime, defaultTimeLocale)
 import System.Console.ANSI
 import qualified Data.Text.IO as TextIO
 import qualified System.IO as IO
@@ -89,17 +91,20 @@ withNullLogger body = do
 withFileLogger :: FilePath -> (Handle -> IO r) -> IO r
 withFileLogger path body = do
     bracket
-        (new path)
+        (newFileLogger path)
         fst
         (body . snd)
 
 
-new :: FilePath -> IO (IO (), Handle)
-new path = do
+newFileLogger :: FilePath -> IO (IO (), Handle)
+newFileLogger path = do
     fh <- IO.openFile path IO.AppendMode
+    IO.hSetEncoding fh =<< IO.mkTextEncoding "UTF-8//TRANSLIT"
     return $ (,) (IO.hClose fh) $ Handle
         { send = \level text -> do
-            TextIO.hPutStrLn fh $ pack (show level) <> ": " <> text }
+            time <- getCurrentTime
+            let timestr = formatTime defaultTimeLocale "%F %T.%q" time
+            TextIO.hPutStrLn fh $ pack (timestr <> ": " <> show level) <> ": " <> text }
 
 
 {--}
