@@ -29,11 +29,11 @@ import qualified Responder.Repeat
 
 
 data ExpectedAction
-    = SendMessage Channel.ChatId Text [Channel.QueryButton] (Either Text Channel.MessageId)
+    = SendMessage Channel.ChatId Channel.RichText [Channel.QueryButton] (Either Text Channel.MessageId)
     | SendSticker Channel.ChatId Channel.FileId (Either Text ())
     | SendMedia Channel.ChatId Text Channel.Media (Either Text ())
     | SendMediaGroup Channel.ChatId Channel.MediaGroup (Either Text ())
-    | UpdateMessage Channel.ChatId Channel.MessageId Text [Channel.QueryButton] (Either Text ())
+    | UpdateMessage Channel.ChatId Channel.MessageId Channel.RichText [Channel.QueryButton] (Either Text ())
     | AnswerQuery Channel.QueryId Text (Either Text ())
     deriving (Show, Eq)
 
@@ -61,7 +61,7 @@ testPoll pevents = do
     return events
 
 
-testSendMessage :: IORef [ExpectedAction] -> Channel.ChatId -> Text -> [Channel.QueryButton] -> IO (Either Text Channel.MessageId)
+testSendMessage :: IORef [ExpectedAction] -> Channel.ChatId -> Channel.RichText -> [Channel.QueryButton] -> IO (Either Text Channel.MessageId)
 testSendMessage pactions chatId text buttons = do
     SendMessage expchatId exptext expbuttons result:rest <- readIORef pactions
     writeIORef pactions $! rest
@@ -93,7 +93,7 @@ testSendMediaGroup pactions chatId group = do
     return $ result
 
 
-testUpdateMessage :: IORef [ExpectedAction] -> Channel.ChatId -> Channel.MessageId -> Text -> [Channel.QueryButton] -> IO (Either Text ())
+testUpdateMessage :: IORef [ExpectedAction] -> Channel.ChatId -> Channel.MessageId -> Channel.RichText -> [Channel.QueryButton] -> IO (Either Text ())
 testUpdateMessage pactions chatId messageId text buttons = do
     UpdateMessage expchatId expmessageId exptext expbuttons result:rest <- readIORef pactions
     writeIORef pactions $! rest
@@ -157,71 +157,71 @@ spec = do
                 withTestChannel $ \pevents pactions channel -> do
                     Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 105 600 "some text"
+                            [ Channel.EventMessage 105 600 (Channel.plainText "some text")
                             ]
-                            [ SendMessage 105 "some text" [] (Right 603)
-                            , SendMessage 105 "some text" [] (Right 604)
+                            [ SendMessage 105 (Channel.plainText "some text") [] (Right 603)
+                            , SendMessage 105 (Channel.plainText "some text") [] (Right 604)
                             ]
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 100 500 "mytext 500"
-                            , Channel.EventMessage 100 501 "mytext 501"
+                            [ Channel.EventMessage 100 500 (Channel.plainText "mytext 500")
+                            , Channel.EventMessage 100 501 (Channel.plainText "mytext 501")
                             ]
-                            [ SendMessage 100 "mytext 500" [] (Right 502)
-                            , SendMessage 100 "mytext 500" [] (Right 503)
-                            , SendMessage 100 "mytext 501" [] (Right 504)
-                            , SendMessage 100 "mytext 501" [] (Right 505)
+                            [ SendMessage 100 (Channel.plainText "mytext 500") [] (Right 502)
+                            , SendMessage 100 (Channel.plainText "mytext 500") [] (Right 503)
+                            , SendMessage 100 (Channel.plainText "mytext 501") [] (Right 504)
+                            , SendMessage 100 (Channel.plainText "mytext 501") [] (Right 505)
                             ]
         it "detects unknown commands" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestChannel $ \pevents pactions channel -> do
                     Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 105 601 "/unknown-command"
+                            [ Channel.EventMessage 105 601 (Channel.plainText "/unknown-command")
                             ]
-                            [ SendMessage 105 unknownCmdMsg [] (Right 605)
+                            [ SendMessage 105 (Channel.plainText unknownCmdMsg) [] (Right 605)
                             ]
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 102 510 "/unknown-command"
-                            , Channel.EventMessage 102 511 "other text"
+                            [ Channel.EventMessage 102 510 (Channel.plainText "/unknown-command")
+                            , Channel.EventMessage 102 511 (Channel.plainText "other text")
                             ]
-                            [ SendMessage 102 unknownCmdMsg [] (Right 512)
-                            , SendMessage 102 "other text" [] (Right 513)
-                            , SendMessage 102 "other text" [] (Right 514)
+                            [ SendMessage 102 (Channel.plainText unknownCmdMsg) [] (Right 512)
+                            , SendMessage 102 (Channel.plainText "other text") [] (Right 513)
+                            , SendMessage 102 (Channel.plainText "other text") [] (Right 514)
                             ]
         it "allows to change the multiplier" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestChannel $ \pevents pactions channel -> do
                     Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 105 601 inspectMultiplierCmd
+                            [ Channel.EventMessage 105 601 (Channel.plainText inspectMultiplierCmd)
                             ]
-                            [ SendMessage 105 (inspectMultiplierMsg "2") inspectButtons (Right 605)
+                            [ SendMessage 105 (Channel.plainText (inspectMultiplierMsg "2")) inspectButtons (Right 605)
                             ]
                         oneWork pevents pactions responder
                             [ Channel.EventQuery 105 605 "qid1" "r3"
                             ]
                             [ AnswerQuery "qid1" "" (Right ())
-                            , UpdateMessage 105 605 (multiplierSetMsg "3") [] (Right ())
+                            , UpdateMessage 105 605 (Channel.plainText (multiplierSetMsg "3")) [] (Right ())
                             ]
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 105 607 "message in 105"
+                            [ Channel.EventMessage 105 607 (Channel.plainText "message in 105")
                             ]
-                            [ SendMessage 105 "message in 105" [] (Right 608)
-                            , SendMessage 105 "message in 105" [] (Right 609)
-                            , SendMessage 105 "message in 105" [] (Right 610)
+                            [ SendMessage 105 (Channel.plainText "message in 105") [] (Right 608)
+                            , SendMessage 105 (Channel.plainText "message in 105") [] (Right 609)
+                            , SendMessage 105 (Channel.plainText "message in 105") [] (Right 610)
                             ]
         it "keeps individual multipliers for each chat" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestChannel $ \pevents pactions channel -> do
                     Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 100 11 inspectMultiplierCmd
-                            , Channel.EventMessage 200 21 inspectMultiplierCmd
-                            , Channel.EventMessage 300 31 inspectMultiplierCmd
+                            [ Channel.EventMessage 100 11 (Channel.plainText inspectMultiplierCmd)
+                            , Channel.EventMessage 200 21 (Channel.plainText inspectMultiplierCmd)
+                            , Channel.EventMessage 300 31 (Channel.plainText inspectMultiplierCmd)
                             ]
-                            [ SendMessage 100 (inspectMultiplierMsg "2") inspectButtons (Right 12)
-                            , SendMessage 200 (inspectMultiplierMsg "2") inspectButtons (Right 22)
-                            , SendMessage 300 (inspectMultiplierMsg "2") inspectButtons (Right 32)
+                            [ SendMessage 100 (Channel.plainText (inspectMultiplierMsg "2")) inspectButtons (Right 12)
+                            , SendMessage 200 (Channel.plainText (inspectMultiplierMsg "2")) inspectButtons (Right 22)
+                            , SendMessage 300 (Channel.plainText (inspectMultiplierMsg "2")) inspectButtons (Right 32)
                             ]
                         oneWork pevents pactions responder
                             [ Channel.EventQuery 300 32 "qid3" "r3"
@@ -229,87 +229,87 @@ spec = do
                             , Channel.EventQuery 200 22 "qid2" "r2"
                             ]
                             [ AnswerQuery "qid3" "" (Right ())
-                            , UpdateMessage 300 32 (multiplierSetMsg "3") [] (Right ())
+                            , UpdateMessage 300 32 (Channel.plainText (multiplierSetMsg "3")) [] (Right ())
                             , AnswerQuery "qid1" "" (Right ())
-                            , UpdateMessage 100 12 (multiplierSetMsg "1") [] (Right ())
+                            , UpdateMessage 100 12 (Channel.plainText (multiplierSetMsg "1")) [] (Right ())
                             , AnswerQuery "qid2" "" (Right ())
-                            , UpdateMessage 200 22 (multiplierSetMsg "2") [] (Right ())
+                            , UpdateMessage 200 22 (Channel.plainText (multiplierSetMsg "2")) [] (Right ())
                             ]
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 200 23 "message in 200"
-                            , Channel.EventMessage 300 33 "message in 300"
-                            , Channel.EventMessage 100 13 "message in 100"
-                            , Channel.EventMessage 500 53 "message in 500"
+                            [ Channel.EventMessage 200 23 (Channel.plainText "message in 200")
+                            , Channel.EventMessage 300 33 (Channel.plainText "message in 300")
+                            , Channel.EventMessage 100 13 (Channel.plainText "message in 100")
+                            , Channel.EventMessage 500 53 (Channel.plainText "message in 500")
                             ]
-                            [ SendMessage 200 "message in 200" [] (Right 24)
-                            , SendMessage 200 "message in 200" [] (Right 25)
-                            , SendMessage 300 "message in 300" [] (Right 34)
-                            , SendMessage 300 "message in 300" [] (Right 35)
-                            , SendMessage 300 "message in 300" [] (Right 36)
-                            , SendMessage 100 "message in 100" [] (Right 14)
-                            , SendMessage 500 "message in 500" [] (Right 54)
-                            , SendMessage 500 "message in 500" [] (Right 55)
+                            [ SendMessage 200 (Channel.plainText "message in 200") [] (Right 24)
+                            , SendMessage 200 (Channel.plainText "message in 200") [] (Right 25)
+                            , SendMessage 300 (Channel.plainText "message in 300") [] (Right 34)
+                            , SendMessage 300 (Channel.plainText "message in 300") [] (Right 35)
+                            , SendMessage 300 (Channel.plainText "message in 300") [] (Right 36)
+                            , SendMessage 100 (Channel.plainText "message in 100") [] (Right 14)
+                            , SendMessage 500 (Channel.plainText "message in 500") [] (Right 54)
+                            , SendMessage 500 (Channel.plainText "message in 500") [] (Right 55)
                             ]
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 100 100 inspectMultiplierCmd
-                            , Channel.EventMessage 500 100 inspectMultiplierCmd
-                            , Channel.EventMessage 200 100 inspectMultiplierCmd
-                            , Channel.EventMessage 300 100 inspectMultiplierCmd
+                            [ Channel.EventMessage 100 100 (Channel.plainText inspectMultiplierCmd)
+                            , Channel.EventMessage 500 100 (Channel.plainText inspectMultiplierCmd)
+                            , Channel.EventMessage 200 100 (Channel.plainText inspectMultiplierCmd)
+                            , Channel.EventMessage 300 100 (Channel.plainText inspectMultiplierCmd)
                             ]
-                            [ SendMessage 100 (inspectMultiplierMsg "1") inspectButtons (Right 101)
-                            , SendMessage 500 (inspectMultiplierMsg "2") inspectButtons (Right 101)
-                            , SendMessage 200 (inspectMultiplierMsg "2") inspectButtons (Right 101)
-                            , SendMessage 300 (inspectMultiplierMsg "3") inspectButtons (Right 101)
+                            [ SendMessage 100 (Channel.plainText (inspectMultiplierMsg "1")) inspectButtons (Right 101)
+                            , SendMessage 500 (Channel.plainText (inspectMultiplierMsg "2")) inspectButtons (Right 101)
+                            , SendMessage 200 (Channel.plainText (inspectMultiplierMsg "2")) inspectButtons (Right 101)
+                            , SendMessage 300 (Channel.plainText (inspectMultiplierMsg "3")) inspectButtons (Right 101)
                             ]
         it "starts itself" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestChannel $ \pevents pactions channel -> do
                     Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 100 11 startCmd
+                            [ Channel.EventMessage 100 11 (Channel.plainText startCmd)
                             ]
-                            [ SendMessage 100 (startMsg "2") [] (Right 12)
+                            [ SendMessage 100 (Channel.plainText (startMsg "2")) [] (Right 12)
                             ]
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 100 13 inspectMultiplierCmd
+                            [ Channel.EventMessage 100 13 (Channel.plainText inspectMultiplierCmd)
                             ]
-                            [ SendMessage 100 (inspectMultiplierMsg "2") inspectButtons (Right 14)
+                            [ SendMessage 100 (Channel.plainText (inspectMultiplierMsg "2")) inspectButtons (Right 14)
                             ]
                         oneWork pevents pactions responder
                             [ Channel.EventQuery 100 14 "qid1" "r1"
                             ]
                             [ AnswerQuery "qid1" "" (Right ())
-                            , UpdateMessage 100 14 (multiplierSetMsg "1") [] (Right ())
+                            , UpdateMessage 100 14 (Channel.plainText (multiplierSetMsg "1")) [] (Right ())
                             ]
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 100 15 startCmd
+                            [ Channel.EventMessage 100 15 (Channel.plainText startCmd)
                             ]
-                            [ SendMessage 100 (startMsg "1") [] (Right 16)
+                            [ SendMessage 100 (Channel.plainText (startMsg "1")) [] (Right 16)
                             ]
         it "describes itself" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestChannel $ \pevents pactions channel -> do
                     Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 100 11 describeCmd
+                            [ Channel.EventMessage 100 11 (Channel.plainText describeCmd)
                             ]
-                            [ SendMessage 100 (describeMsg "2") [] (Right 12)
+                            [ SendMessage 100 (Channel.plainText (describeMsg "2")) [] (Right 12)
                             ]
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 100 13 inspectMultiplierCmd
+                            [ Channel.EventMessage 100 13 (Channel.plainText inspectMultiplierCmd)
                             ]
-                            [ SendMessage 100 (inspectMultiplierMsg "2") inspectButtons (Right 14)
+                            [ SendMessage 100 (Channel.plainText (inspectMultiplierMsg "2")) inspectButtons (Right 14)
                             ]
                         oneWork pevents pactions responder
                             [ Channel.EventQuery 100 14 "qid1" "r4"
                             ]
                             [ AnswerQuery "qid1" "" (Right ())
-                            , UpdateMessage 100 14 (multiplierSetMsg "4") [] (Right ())
+                            , UpdateMessage 100 14 (Channel.plainText (multiplierSetMsg "4")) [] (Right ())
                             ]
                         oneWork pevents pactions responder
-                            [ Channel.EventMessage 100 15 describeCmd
+                            [ Channel.EventMessage 100 15 (Channel.plainText describeCmd)
                             ]
-                            [ SendMessage 100 (describeMsg "4") [] (Right 16)
+                            [ SendMessage 100 (Channel.plainText (describeMsg "4")) [] (Right 16)
                             ]
         it "repeats stickers" $ do
             Logger.withNullLogger $ \logger -> do
@@ -351,4 +351,61 @@ spec = do
                             , SendMedia 100 "caption 5" (Channel.MediaVoice "voice 100") (Right ())
                             , SendMedia 100 "caption 6" (Channel.MediaDocument "doc 100") (Right ())
                             , SendMedia 100 "caption 6" (Channel.MediaDocument "doc 100") (Right ())
+                            ]
+        it "repeats rich text messages" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestChannel $ \pevents pactions channel -> do
+                    Responder.Repeat.withRepeatResponder config logger channel $ \responder -> do
+                        let message1 =
+                                  Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False True False False) "italic "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True True False False) "bolditalic "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False True) "strike "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True True) "understrike "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False True False) "boldunder "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
+                                $ Channel.RichTextEnd
+                        let message2 =
+                                  Channel.RichTextLink "link url"
+                                    ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "link "
+                                    $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold"
+                                    $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " link"
+                                    $ Channel.RichTextEnd )
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextMention "user id"
+                                    ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "mention "
+                                    $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
+                                    $ Channel.RichTextEnd )
+                                $ Channel.RichTextEnd
+                        let message3 =
+                                  Channel.RichTextMono "inline-code"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextCode "" "block-code"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextCode "code lang" "block-code-lang"
+                                $ Channel.RichTextEnd
+                        let message4 =
+                                  Channel.RichTextSpan (Channel.SpanStyle False False False False) "tt \x1F914"
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "\x1F914 bb"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " \x1F914\x1F914 "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "uu"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " tt"
+                                $ Channel.RichTextEnd
+                        oneWork pevents pactions responder
+                            [ Channel.EventMessage 100 11 message1
+                            , Channel.EventMessage 100 12 message2
+                            , Channel.EventMessage 100 13 message3
+                            , Channel.EventMessage 100 14 message4
+                            ]
+                            [ SendMessage 100 message1 [] (Right 20)
+                            , SendMessage 100 message1 [] (Right 21)
+                            , SendMessage 100 message2 [] (Right 22)
+                            , SendMessage 100 message2 [] (Right 23)
+                            , SendMessage 100 message3 [] (Right 24)
+                            , SendMessage 100 message3 [] (Right 25)
+                            , SendMessage 100 message4 [] (Right 26)
+                            , SendMessage 100 message4 [] (Right 27)
                             ]

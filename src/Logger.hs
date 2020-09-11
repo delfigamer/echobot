@@ -104,7 +104,9 @@ newFileLogger path = do
         { send = \level text -> do
             time <- getCurrentTime
             let timestr = formatTime defaultTimeLocale "%F %T.%q" time
-            TextIO.hPutStrLn fh $ pack (timestr <> ": " <> show level) <> ": " <> text }
+            TextIO.hPutStrLn fh $ pack (timestr <> ": " <> show level) <> ": " <> text
+            IO.hFlush fh
+        }
 
 
 {--}

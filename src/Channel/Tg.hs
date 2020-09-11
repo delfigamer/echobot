@@ -17,11 +17,13 @@ import Data.Aeson
 import Data.Aeson.Text
 import Data.Either
 import Data.IORef
+import Data.List
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy as TextLazy
+import qualified Data.Text.Lazy.Builder as Builder
 import qualified Data.Vector as Vector
 import qualified Channel
 import qualified Logger
@@ -181,22 +183,21 @@ toGroupElem _ ev = Left ev
 tgcSendMessage
     :: TgChannel
     -> Channel.ChatId
-    -> Text
+    -> Channel.RichText
     -> [Channel.QueryButton]
     -> IO (Either Text Channel.MessageId)
-tgcSendMessage tgc chatId text buttons = do
+tgcSendMessage tgc chatId content buttons = do
     Logger.info (tgcLogger tgc) $
         "TgChannel: Send message"
     Logger.debug (tgcLogger tgc) $
-        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show text)
+        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show content)
     Logger.debug (tgcLogger tgc) $
         "TgChannel: \t" <> Text.pack (show buttons)
     resp <- WebDriver.request (tgcDriver tgc)
         (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "sendMessage"])
         (object $
             [ "chat_id" .= chatId
-            , "text" .= text
-            ] <> keyboardMarkupOpt (tgcKeyboardWidth tgc) buttons)
+            ] <> richTextOpt content <> keyboardMarkupOpt (tgcKeyboardWidth tgc) buttons)
     case resp of
         TgResponseOk (TgSentMessageId messageId) -> do
             Logger.debug (tgcLogger tgc) $
@@ -329,14 +330,14 @@ tgcUpdateMessage
     :: TgChannel
     -> Channel.ChatId
     -> Channel.MessageId
-    -> Text
+    -> Channel.RichText
     -> [Channel.QueryButton]
     -> IO (Either Text ())
-tgcUpdateMessage tgc chatId messageId text buttons = do
+tgcUpdateMessage tgc chatId messageId content buttons = do
     Logger.info (tgcLogger tgc) $
         "TgChannel: Update message"
     Logger.debug (tgcLogger tgc) $
-        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show messageId) <> " <- " <> Text.pack (show text)
+        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show messageId) <> " <- " <> Text.pack (show content)
     Logger.debug (tgcLogger tgc) $
         "TgChannel: \t" <> Text.pack (show buttons)
     resp <- WebDriver.request (tgcDriver tgc)
@@ -344,8 +345,7 @@ tgcUpdateMessage tgc chatId messageId text buttons = do
         (object $
             [ "chat_id" .= chatId
             , "message_id" .= messageId
-            , "text" .= text
-            ] <> keyboardMarkupOpt (tgcKeyboardWidth tgc) buttons)
+            ] <> richTextOpt content <> keyboardMarkupOpt (tgcKeyboardWidth tgc) buttons)
     case resp of
         TgResponseOk (TgVoid _) -> do
             Logger.debug (tgcLogger tgc) $
@@ -404,6 +404,55 @@ keyboardMarkupOpt kbwidth buttons = do
 mediaCaptionOpt :: KeyValue kv => Text -> [kv]
 mediaCaptionOpt "" = []
 mediaCaptionOpt caption = ["caption" .= caption]
+
+
+richTextOpt :: KeyValue kv => Channel.RichText -> [kv]
+richTextOpt (Channel.RichTextSpan (Channel.SpanStyle False False False False) text Channel.RichTextEnd) =
+    [ "text" .= text
+    ]
+richTextOpt rt =
+    [ "text" .= Builder.toLazyText (encodeRichTextBuild rt)
+    , "parse_mode" .= ("HTML" :: Text)
+    ]
+
+
+encodeRichTextBuild :: Channel.RichText -> Builder.Builder
+encodeRichTextBuild (Channel.RichTextSpan (Channel.SpanStyle bold italic underline strike) text next) = do
+    let mine =
+            surround "<b>" "</b>" bold $
+                surround "<i>" "</i>" italic $
+                    surround "<u>" "</u>" underline $
+                        surround "<s>" "</s>" strike $
+                            escapeHtml text
+    mine <> encodeRichTextBuild next
+encodeRichTextBuild (Channel.RichTextLink href title next) = do
+    "<a href=\"" <> escapeHtml href <> "\">" <> encodeRichTextBuild title <> "</a>" <> encodeRichTextBuild next
+encodeRichTextBuild (Channel.RichTextMention user title next) = do
+    "<a href=\"tg://user?id=" <> escapeHtml user <> "\">" <> encodeRichTextBuild title <> "</a>" <> encodeRichTextBuild next
+encodeRichTextBuild (Channel.RichTextMono text next) = do
+    "<code>" <> escapeHtml text <> "</code>" <> encodeRichTextBuild next
+encodeRichTextBuild (Channel.RichTextCode "" text next) = do
+    "<pre>" <> escapeHtml text <> "</pre>" <> encodeRichTextBuild next
+encodeRichTextBuild (Channel.RichTextCode language text next) = do
+    "<pre><code class=\"language-" <> escapeHtml language <> "\">" <> escapeHtml text <> "</code></pre>" <> encodeRichTextBuild next
+encodeRichTextBuild Channel.RichTextEnd = mempty
+
+
+surround :: Builder.Builder -> Builder.Builder -> Bool -> Builder.Builder -> Builder.Builder
+surround left right True mid = left <> mid <> right
+surround _ _ False mid = mid
+
+
+escapeHtml :: Text -> Builder.Builder
+escapeHtml = Text.foldr (\c a -> escapeHtmlChar c <> a) mempty
+
+
+escapeHtmlChar :: Char -> Builder.Builder
+escapeHtmlChar '<' = "&lt;"
+escapeHtmlChar '>' = "&gt;"
+escapeHtmlChar '&' = "&amp;"
+escapeHtmlChar '"' = "&quot;"
+escapeHtmlChar c = Builder.singleton c
 
 
 data TgResponse a
@@ -482,10 +531,44 @@ instance FromJSON TgEventMessage where
         parseMsgText chatId mgroupId m = do
             messageId <- m .: "message_id"
             text <- m .: "text"
+            entities <- m .:? "entities" .!= []
             return $ TgEventMessage mgroupId $ Channel.EventMessage
                 { Channel.eChatId = chatId
                 , Channel.eMessageId = messageId
-                , Channel.eMessage = text }
+                , Channel.eMessage = parseMessageText text entities }
+
+
+data TgTextEntity
+    = TgTextEntity !Int !Int !TgTextEntityKind
+
+
+data TgTextEntityKind
+    = TgTextSpan !Channel.SpanStyle
+    | TgTextLink !Text
+    | TgTextMention !Text
+    | TgTextMono
+    | TgTextCode !Text
+    | TgTextIgnore
+
+
+instance FromJSON TgTextEntity where
+    parseJSON = withObject "TgTextEntity" $ \m -> do
+        ofs <- m .: "offset"
+        len <- m .: "length"
+        entype <- m .: "type"
+        enkind <- case entype :: Text of
+            "bold" -> return $ TgTextSpan $ Channel.SpanStyle True False False False
+            "italic" -> return $ TgTextSpan $ Channel.SpanStyle False True False False
+            "underline" -> return $ TgTextSpan $ Channel.SpanStyle False False True False
+            "strikethrough" -> return $ TgTextSpan $ Channel.SpanStyle False False False True
+            "code" -> return $ TgTextMono
+            "pre" -> TgTextCode <$> m .:? "language" .!= ""
+            "text_link" -> TgTextLink <$> m .:? "url" .!= ""
+            "text_mention" -> do
+                user <- (m .: "user" >>= (.: "id")) `mplus` return ""
+                return $ TgTextMention user
+            _ -> return $ TgTextIgnore
+        return $ TgTextEntity ofs (ofs + len) enkind
 
 
 newtype TgEventGroupElem = TgEventGroupElem (Channel.MediaGroup -> Channel.MediaGroup)
@@ -533,3 +616,113 @@ newtype TgVoid = TgVoid ()
 
 instance FromJSON TgVoid where
     parseJSON _ = return $ TgVoid ()
+
+
+parseMessageText :: TextLazy.Text -> [TgTextEntity] -> Channel.RichText
+parseMessageText text entities = do
+    let sortedEntities = sortBy entityComparer entities
+    let chars = markOffset 0 $ TextLazy.unpack text
+    runConsumer consumeMessage (\_ _ _ buf -> buf Channel.RichTextEnd) sortedEntities chars id
+    where
+    entityComparer :: TgTextEntity -> TgTextEntity -> Ordering
+    entityComparer (TgTextEntity begin1 end1 _) (TgTextEntity begin2 end2 _) = compare begin1 begin2 <> compare end2 end1
+
+    markOffset :: Int -> String -> [(Char, Int)]
+    markOffset _ [] = []
+    markOffset pos (x:xs)
+        | x < '\x10000' = (x, pos):markOffset (pos+1) xs
+        | otherwise = (x, pos):markOffset (pos+2) xs
+
+
+newtype MessageTextConsumer t = MessageTextConsumer
+    { runConsumer :: forall r
+        .  (t -> [TgTextEntity] -> [(Char, Int)] -> (Channel.RichText -> Channel.RichText) -> r)
+        ->       [TgTextEntity] -> [(Char, Int)] -> (Channel.RichText -> Channel.RichText) -> r }
+
+
+instance Functor MessageTextConsumer where
+    fmap = liftM
+
+
+instance Applicative MessageTextConsumer where
+    pure = return
+    (<*>) = ap
+
+
+instance Monad MessageTextConsumer where
+    return x = MessageTextConsumer $ \cont -> cont x
+    m >>= f = MessageTextConsumer $ \cont -> runConsumer m (\x -> runConsumer (f x) cont)
+
+
+popEntity :: MessageTextConsumer (Maybe TgTextEntity)
+popEntity = MessageTextConsumer $ \cont ents -> do
+    case ents of
+        e:es -> cont (Just e) es
+        [] -> cont Nothing ents
+
+
+popEntityBefore :: Int -> MessageTextConsumer (Maybe TgTextEntity)
+popEntityBefore end = MessageTextConsumer $ \cont ents -> do
+    case ents of
+        e@(TgTextEntity entBegin _ _):es | entBegin < end -> cont (Just e) es
+        _ -> cont Nothing ents
+
+
+packWith :: Int -> (Text -> Channel.RichText -> Channel.RichText) -> MessageTextConsumer ()
+packWith end termf = MessageTextConsumer $ \cont ents chars buf -> do
+    let (left, rest) = break (\(_, pos) -> pos >= end) chars
+    case left of
+        [] -> cont () ents rest buf
+        _ -> cont () ents rest (buf . termf (Text.pack $ map fst $ left))
+
+
+packFinalWith :: (Text -> Channel.RichText -> Channel.RichText) -> MessageTextConsumer ()
+packFinalWith termf = MessageTextConsumer $ \cont ents chars buf -> do
+    case chars of
+        [] -> cont () ents [] buf
+        _ -> cont () ents [] (buf . termf (Text.pack $ map fst $ chars))
+
+
+embedConsumer :: (Channel.RichText -> Channel.RichText -> Channel.RichText) -> MessageTextConsumer () -> MessageTextConsumer ()
+embedConsumer mapf inner = MessageTextConsumer $ \cont ents1 chars1 buf1 -> do
+    runConsumer inner
+        (\_ ents2 chars2 innerbuf -> cont () ents2 chars2 (buf1 . mapf (innerbuf Channel.RichTextEnd)))
+        ents1 chars1 id
+
+
+consumeMessage :: MessageTextConsumer ()
+consumeMessage = do
+    ment <- popEntity
+    case ment of
+        Just (TgTextEntity _ _ TgTextIgnore) -> consumeMessage
+        Just (TgTextEntity begin end kind) -> do
+            packWith begin $ Channel.RichTextSpan Channel.plainStyle
+            case kind of
+                TgTextSpan style -> consumeStyleSpan end style
+                TgTextLink href -> embedConsumer (Channel.RichTextLink href) $ consumeStyleSpan end Channel.plainStyle
+                TgTextMention user -> embedConsumer (Channel.RichTextMention user) $ consumeStyleSpan end Channel.plainStyle
+                TgTextMono -> packWith end $ Channel.RichTextMono
+                TgTextCode lang -> packWith end $ Channel.RichTextCode lang
+            consumeMessage
+        Nothing -> do
+            packFinalWith $ Channel.RichTextSpan Channel.plainStyle
+
+
+consumeStyleSpan :: Int -> Channel.SpanStyle -> MessageTextConsumer ()
+consumeStyleSpan spanEnd style = do
+    ment <- popEntityBefore spanEnd
+    case ment of
+        Just (TgTextEntity begin end kind) -> do
+            case kind of
+                TgTextSpan style2 -> do
+                    packWith begin $ Channel.RichTextSpan style
+                    consumeStyleSpan end $ commonStyle style style2
+                _ -> return ()
+            consumeStyleSpan spanEnd style
+        Nothing -> do
+            packWith spanEnd $ Channel.RichTextSpan style
+
+
+commonStyle :: Channel.SpanStyle -> Channel.SpanStyle -> Channel.SpanStyle
+commonStyle (Channel.SpanStyle b1 i1 u1 s1) (Channel.SpanStyle b2 i2 u2 s2) = do
+    Channel.SpanStyle (b1 || b2) (i1 || i2) (u1 || u2) (s1 || s2)

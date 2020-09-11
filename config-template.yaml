@@ -7,10 +7,16 @@
 # - "null" # drops all messages
 # - "std" # prints messages into the standard output
 # - file: "filename" # appends messages to the specified file
+# - filter: # filters messages passed to the destination
+#     level: "debug"|"info"|"warn"|"err" # the level threshold of the messages
+#     of: logger # the destination that receives the filtered messages,
+#                # either a single logger from this list or an array of them
 # The default is a singular "std"
 logger:
-  - std
   - file: EchoBot.log
+  - filter:
+      level: warn
+      of: std
 
 
 # Each submodule can be given individual verbosity level

@@ -76,10 +76,12 @@ erWork er = do
 
 
 erHandleEvent :: RepeatResponder -> Channel.Event -> IO ()
-erHandleEvent er (Channel.EventMessage chatId _ text) = do
+erHandleEvent er (Channel.EventMessage chatId _ content@(Channel.RichTextSpan (Channel.SpanStyle False False False False) text Channel.RichTextEnd)) = do
     if Text.isPrefixOf "/" text
         then erHandleCommand er chatId text
-        else erRepeatMessage er chatId text
+        else erRepeatMessage er chatId content
+erHandleEvent er (Channel.EventMessage chatId _ content) = do
+    erRepeatMessage er chatId content
 erHandleEvent er (Channel.EventSticker chatId sticker) = do
     erRepeatSticker er chatId sticker
 erHandleEvent er (Channel.EventMedia chatId caption media) = do
@@ -96,19 +98,19 @@ erHandleEvent er (Channel.EventQuery chatId messageId queryId userdata) = do
                 erSetMultiplier er chatId mult
                 erMakeRequest er "updateMessage" $
                     Channel.updateMessage (erChannel er) chatId messageId
-                        (substitute [show mult] $ cMultiplierSetMsg (erConfig er))
+                        (Channel.plainText $ substitute [show mult] $ cMultiplierSetMsg (erConfig er))
                         []
         _ -> return ()
 
 
-erRepeatMessage :: RepeatResponder -> Channel.ChatId -> Text.Text -> IO ()
-erRepeatMessage er chatId text = do
+erRepeatMessage :: RepeatResponder -> Channel.ChatId -> Channel.RichText -> IO ()
+erRepeatMessage er chatId content = do
     mult <- erGetMultiplier er chatId
     Logger.debug (erLogger er) $
         "Responder: repeat a message into " <> Text.pack (show chatId) <> " " <> Text.pack (show mult) <> " times"
     replicateM_ mult $ do
         erMakeRequest er "sendMessage" $
-            Channel.sendMessage (erChannel er) chatId text []
+            Channel.sendMessage (erChannel er) chatId content []
 
 
 erRepeatSticker :: RepeatResponder -> Channel.ChatId -> Channel.FileId -> IO ()
@@ -149,7 +151,7 @@ erHandleCommand er chatId cmd
             "Responder: requested start in " <> Text.pack (show chatId)
         erMakeRequest er "sendMessage" $
             Channel.sendMessage (erChannel er) chatId
-                (substitute [show mult] $ cStartMsg (erConfig er))
+                (Channel.plainText $ substitute [show mult] $ cStartMsg (erConfig er))
                 []
     | Text.isPrefixOf (cDescribeCmd (erConfig er)) cmd = do
         mult <- erGetMultiplier er chatId
@@ -157,7 +159,7 @@ erHandleCommand er chatId cmd
             "Responder: requested description in " <> Text.pack (show chatId)
         erMakeRequest er "sendMessage" $
             Channel.sendMessage (erChannel er) chatId
-                (substitute [show mult] $ cDescribeMsg (erConfig er))
+                (Channel.plainText $ substitute [show mult] $ cDescribeMsg (erConfig er))
                 []
     | Text.isPrefixOf (cInspectMultiplierCmd (erConfig er)) cmd = do
         mult <- erGetMultiplier er chatId
@@ -165,14 +167,14 @@ erHandleCommand er chatId cmd
             "Responder: requested multiplier in " <> Text.pack (show chatId) <> " (currently " <> Text.pack (show mult) <> ")"
         erMakeRequest er "sendMessage" $
             Channel.sendMessage (erChannel er) chatId
-                (substitute [show mult] $ cInspectMultiplierMsg (erConfig er))
+                (Channel.plainText $ substitute [show mult] $ cInspectMultiplierMsg (erConfig er))
                 multiplierButtons
     | otherwise = do
         Logger.debug (erLogger er) $
             "Responder: unknown command in " <> Text.pack (show chatId)
         erMakeRequest er "sendMessage" $
             Channel.sendMessage (erChannel er) chatId
-                (cUnknownCommandMsg (erConfig er))
+                (Channel.plainText $ cUnknownCommandMsg (erConfig er))
                 []
     where
     multiplierButtons = do

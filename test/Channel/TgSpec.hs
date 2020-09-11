@@ -169,7 +169,7 @@ spec = do
                                 ])
                             (Channel.poll channel)
                             []
-        it "receives text and sticker messages" $ do
+        it "receives plain text and sticker messages" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \phandler driver -> do
                     Tg.withTgChannel conf logger driver $ \channel -> do
@@ -205,8 +205,8 @@ spec = do
                                     ]
                                 ])
                             (Channel.poll channel)
-                            [ Channel.EventMessage 100 500 "Sample Text"
-                            , Channel.EventMessage 101 501 "Sample Text 2"
+                            [ Channel.EventMessage 100 500 $ Channel.plainText "Sample Text"
+                            , Channel.EventMessage 101 501 $ Channel.plainText "Sample Text 2"
                             , Channel.EventSticker 102 "sid"
                             ]
                         oneRequest phandler
@@ -238,7 +238,7 @@ spec = do
                                     ]
                                 ])
                             (Channel.poll channel)
-                            [ Channel.EventMessage 100 505 "Sample Text 3"
+                            [ Channel.EventMessage 100 505 $ Channel.plainText "Sample Text 3"
                             ]
                         oneRequest phandler
                             (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
@@ -263,7 +263,7 @@ spec = do
                                 [ "ok" .= True
                                 , "result" .= object ["message_id" .= (600 :: Int)]
                                 ])
-                            (Channel.sendMessage channel 100 "message" [])
+                            (Channel.sendMessage channel 100 (Channel.plainText "message") [])
                             (Right 600)
                         oneRequest phandler
                             (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
@@ -275,7 +275,7 @@ spec = do
                                 [ "ok" .= False
                                 , "description" .= ("err" :: Text)
                                 ])
-                            (Channel.sendMessage channel 102 "message 2" [])
+                            (Channel.sendMessage channel 102 (Channel.plainText "message 2") [])
                             (Left "err")
         it "sends sticker messages" $ do
             Logger.withNullLogger $ \logger -> do
@@ -320,7 +320,7 @@ spec = do
                                 [ "ok" .= True
                                 , "result" .= True
                                 ])
-                            (Channel.updateMessage channel 100 600 "updated message" [])
+                            (Channel.updateMessage channel 100 600 (Channel.plainText "updated message") [])
                             (Right ())
                         oneRequest phandler
                             (WebDriver.HttpsAddress "api.telegram.org" [token, "editMessageText"])
@@ -333,7 +333,7 @@ spec = do
                                 [ "ok" .= False
                                 , "description" .= ("err" :: Text)
                                 ])
-                            (Channel.updateMessage channel 102 700 "updated message 2" [])
+                            (Channel.updateMessage channel 102 700 (Channel.plainText "updated message 2") [])
                             (Left "err")
         it "sends messages with buttons" $ do
             Logger.withNullLogger $ \logger -> do
@@ -359,7 +359,7 @@ spec = do
                                 [ "ok" .= True
                                 , "result" .= object ["message_id" .= (600 :: Int)]
                                 ])
-                            (Channel.sendMessage channel 100 "message"
+                            (Channel.sendMessage channel 100 (Channel.plainText "message")
                                 [ Channel.QueryButton "t1" "u1"
                                 , Channel.QueryButton "t2" "u2"
                                 , Channel.QueryButton "t3" "u3"
@@ -392,7 +392,7 @@ spec = do
                                 [ "ok" .= True
                                 , "result" .= True
                                 ])
-                            (Channel.updateMessage channel 100 600 "updated message"
+                            (Channel.updateMessage channel 100 600 (Channel.plainText "updated message")
                                 [ Channel.QueryButton "t1" "u1"
                                 , Channel.QueryButton "t2" "u2"
                                 , Channel.QueryButton "t3" "u3"
@@ -443,7 +443,7 @@ spec = do
                                     ]
                                 ])
                             (Channel.poll channel)
-                            [ Channel.EventMessage 100 500 "Sample Text"
+                            [ Channel.EventMessage 100 500 (Channel.plainText "Sample Text")
                             , Channel.EventQuery 101 501 "qid1" "qdata1"
                             , Channel.EventQuery 102 502 "qid2" "qdata2"
                             ]
@@ -843,3 +843,292 @@ spec = do
                                 $ Channel.MediaGroupVideo "caption 3" "video 3"
                                 $ Channel.MediaGroupEnd)
                             (Right ())
+        it "receives rich text messages" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \phandler driver -> do
+                    Tg.withTgChannel conf logger driver $ \channel -> do
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
+                            (object ["timeout" .= timeout])
+                            (object
+                                [ "ok" .= True
+                                , "result" .=
+                                    [ object
+                                        [ "update_id" .= (1 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "message_id" .= (500 :: Int)
+                                            {-                                                            ^23456789_12^23456789_      -}
+                                            {-                  ^2345^234567^23456789_1      ^23456^23456789_123456789^23456789_12345 -}
+                                            , "text" .= ("plain bold italic bolditalic plain under strike understrike boldunder under" :: Text)
+                                            {-            _123456789_123456789_123456789_123456789_123456789_123456789_123456789_1234 -}
+                                            , "entities" .=
+                                                [ object ["type" .= ("bold" :: Text), "offset" .= (6 :: Int), "length" .= (5 :: Int)]
+                                                , object ["type" .= ("italic" :: Text), "offset" .= (11 :: Int), "length" .= (7 :: Int)]
+                                                , object ["type" .= ("bold" :: Text), "offset" .= (18 :: Int), "length" .= (11 :: Int)]
+                                                , object ["type" .= ("italic" :: Text), "offset" .= (18 :: Int), "length" .= (11 :: Int)]
+                                                , object ["type" .= ("underline" :: Text), "offset" .= (35 :: Int), "length" .= (6 :: Int)]
+                                                , object ["type" .= ("strikethrough" :: Text), "offset" .= (41 :: Int), "length" .= (19 :: Int)]
+                                                , object ["type" .= ("underline" :: Text), "offset" .= (48 :: Int), "length" .= (12 :: Int)]
+                                                , object ["type" .= ("underline" :: Text), "offset" .= (60 :: Int), "length" .= (15 :: Int)]
+                                                , object ["type" .= ("bold" :: Text), "offset" .= (60 :: Int), "length" .= (10 :: Int)]
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ])
+                            (Channel.poll channel)
+                            [ Channel.EventMessage 100 500
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False True False False) "italic "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True True False False) "bolditalic "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False True) "strike "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True True) "understrike "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False True False) "boldunder "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
+                                $ Channel.RichTextEnd
+                            ]
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
+                            (object ["offset" .= (2 :: Int), "timeout" .= timeout])
+                            (object
+                                [ "ok" .= True
+                                , "result" .=
+                                    [ object
+                                        [ "update_id" .= (2 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "message_id" .= (500 :: Int)
+                                            {-                 ^234                    ^2345 -}
+                                            {-            ^23456789_1234       ^23456789_123 -}
+                                            , "text" .= ("link bold link plain mention under" :: Text)
+                                            {-            _123456789_123456789_123456789_123 -}
+                                            , "entities" .=
+                                                [ object ["type" .= ("bold" :: Text), "offset" .= (5 :: Int), "length" .= (4 :: Int)]
+                                                , object ["type" .= ("underline" :: Text), "offset" .= (29 :: Int), "length" .= (5 :: Int)]
+                                                , object ["type" .= ("text_link" :: Text), "offset" .= (0 :: Int), "length" .= (14 :: Int), "url" .= ("link url" :: Text)]
+                                                , object ["type" .= ("text_mention" :: Text), "offset" .= (21 :: Int), "length" .= (13 :: Int), "user" .= object ["id" .= ("user id" :: Text)]]
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ])
+                            (Channel.poll channel)
+                            [ Channel.EventMessage 100 500
+                                $ Channel.RichTextLink "link url"
+                                    ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "link "
+                                    $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold"
+                                    $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " link"
+                                    $ Channel.RichTextEnd )
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextMention "user id"
+                                    ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "mention "
+                                    $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
+                                    $ Channel.RichTextEnd )
+                                $ Channel.RichTextEnd
+                            ]
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
+                            (object ["offset" .= (3 :: Int), "timeout" .= timeout])
+                            (object
+                                [ "ok" .= True
+                                , "result" .=
+                                    [ object
+                                        [ "update_id" .= (3 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "message_id" .= (500 :: Int)
+                                            {-            ^23456789_1       ^23456789_       ^23456789_12345 -}
+                                            , "text" .= ("inline-code plain block-code plain block-code-lang" :: Text)
+                                            {-            _123456789_123456789_123456789_123456789_123456789 -}
+                                            , "entities" .=
+                                                [ object ["type" .= ("code" :: Text), "offset" .= (0 :: Int), "length" .= (11 :: Int)]
+                                                , object ["type" .= ("ignore me" :: Text), "offset" .= (14 :: Int), "length" .= (4 :: Int)]
+                                                , object ["type" .= ("pre" :: Text), "offset" .= (18 :: Int), "length" .= (10 :: Int)]
+                                                , object ["type" .= ("pre" :: Text), "offset" .= (35 :: Int), "length" .= (15 :: Int), "language" .= ("code lang" :: Text)]
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ])
+                            (Channel.poll channel)
+                            [ Channel.EventMessage 100 500
+                                $ Channel.RichTextMono "inline-code"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextCode "" "block-code"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextCode "code lang" "block-code-lang"
+                                $ Channel.RichTextEnd
+                            ]
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
+                            (object ["offset" .= (4 :: Int), "timeout" .= timeout])
+                            (object
+                                [ "ok" .= True
+                                , "result" .=
+                                    [ object
+                                        [ "update_id" .= (4 :: Int)
+                                        , "message" .= object
+                                            [ "chat" .= object ["id" .= (100 :: Int)]
+                                            , "message_id" .= (500 :: Int)
+                                            {-                       ^     345                ^2 -}
+                                            , "text" .= ("tt \x1F914\x1F914 bb \x1F914\x1F914 uu tt" :: Text)
+                                            {-            _12 3      5     789_ 1      3     567 -}
+                                            , "entities" .=
+                                                [ object ["type" .= ("bold" :: Text), "offset" .= (5 :: Int), "length" .= (5 :: Int)]
+                                                , object ["type" .= ("underline" :: Text), "offset" .= (16 :: Int), "length" .= (2 :: Int)]
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ])
+                            (Channel.poll channel)
+                            [ Channel.EventMessage 100 500
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "tt \x1F914"
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "\x1F914 bb"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " \x1F914\x1F914 "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "uu"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " tt"
+                                $ Channel.RichTextEnd
+                            ]
+        it "sends rich text messages" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \phandler driver -> do
+                    Tg.withTgChannel conf logger driver $ \channel -> do
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "text" .= ("\
+                                    \plain \
+                                    \<b>bold </b>\
+                                    \<i>italic </i>\
+                                    \<b><i>bolditalic </i></b>\
+                                    \plain \
+                                    \<u>under </u>\
+                                    \<s>strike </s>\
+                                    \<u><s>understrike </s></u>\
+                                    \<b><u>boldunder </u></b>\
+                                    \<u>under</u>" :: Text)
+                                , "parse_mode" .= ("HTML" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= object ["message_id" .= (600 :: Int)]
+                                ])
+                            (Channel.sendMessage channel 100
+                                ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False True False False) "italic "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True True False False) "bolditalic "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False True) "strike "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True True) "understrike "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False True False) "boldunder "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
+                                $ Channel.RichTextEnd )
+                                [])
+                            (Right 600)
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "text" .= ("\
+                                    \<a href=\"link url\">link <b>bold</b> link</a>\
+                                    \ plain \
+                                    \<a href=\"tg://user?id=user id\">mention <u>under</u></a>" :: Text)
+                                , "parse_mode" .= ("HTML" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= object ["message_id" .= (601 :: Int)]
+                                ])
+                            (Channel.sendMessage channel 100
+                                ( Channel.RichTextLink "link url"
+                                    ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "link "
+                                    $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold"
+                                    $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " link"
+                                    $ Channel.RichTextEnd )
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextMention "user id"
+                                    ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "mention "
+                                    $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
+                                    $ Channel.RichTextEnd )
+                                $ Channel.RichTextEnd )
+                                [])
+                            (Right 601)
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "text" .= ("\
+                                    \<code>inline-code</code>\
+                                    \ plain \
+                                    \<pre>block-code</pre>\
+                                    \ plain \
+                                    \<pre><code class=\"language-code lang\">block-code-lang</code></pre>" :: Text)
+                                , "parse_mode" .= ("HTML" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= object ["message_id" .= (602 :: Int)]
+                                ])
+                            (Channel.sendMessage channel 100
+                                ( Channel.RichTextMono "inline-code"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextCode "" "block-code"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextCode "code lang" "block-code-lang"
+                                $ Channel.RichTextEnd )
+                                [])
+                            (Right 602)
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "text" .= ("\
+                                    \tt \x1F914\
+                                    \<b>\x1F914 bb</b>\
+                                    \ \x1F914\x1F914 \
+                                    \<u>uu</u>\
+                                    \ tt" :: Text)
+                                , "parse_mode" .= ("HTML" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= object ["message_id" .= (603 :: Int)]
+                                ])
+                            (Channel.sendMessage channel 100
+                                ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "tt \x1F914"
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "\x1F914 bb"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " \x1F914\x1F914 "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "uu"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " tt"
+                                $ Channel.RichTextEnd )
+                                [])
+                            (Right 603)
+                        oneRequest phandler
+                            (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
+                            (object
+                                [ "chat_id" .= (100 :: Int)
+                                , "text" .= ("\
+                                    \abc&lt;&gt;&amp;&quot;\
+                                    \<b>abc&lt;&gt;&amp;&quot;</b>\
+                                    \abc&lt;&gt;&amp;&quot;" :: Text)
+                                , "parse_mode" .= ("HTML" :: Text)
+                                ])
+                            (object
+                                [ "ok" .= True
+                                , "result" .= object ["message_id" .= (604 :: Int)]
+                                ])
+                            (Channel.sendMessage channel 100
+                                ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "abc<>&\""
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "abc<>&\""
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "abc<>&\""
+                                $ Channel.RichTextEnd )
+                                [])
+                            (Right 604)

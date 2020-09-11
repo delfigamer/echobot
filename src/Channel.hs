@@ -5,11 +5,15 @@ module Channel
     , MediaGroupId
     , QueryId
     , QueryUserdata
+    , SpanStyle(..)
+    , RichText(..)
     , MediaGroup(..)
     , Media(..)
     , Event(..)
     , QueryButton(..)
     , Handle(..)
+    , plainText
+    , plainStyle
     ) where
 
 
@@ -22,6 +26,26 @@ type FileId = Text
 type MediaGroupId = Text
 type QueryId = Text
 type QueryUserdata = Text
+
+
+data SpanStyle
+    = SpanStyle
+        { ssBold :: !Bool
+        , ssItalic :: !Bool
+        , ssUnderline :: !Bool
+        , ssStrike :: !Bool
+        }
+    deriving (Show, Eq)
+
+
+data RichText
+    = RichTextSpan !SpanStyle !Text !RichText
+    | RichTextLink !Text !RichText !RichText
+    | RichTextMention !Text !RichText !RichText
+    | RichTextMono !Text !RichText
+    | RichTextCode !Text !Text !RichText
+    | RichTextEnd
+    deriving (Show, Eq)
 
 
 data MediaGroup
@@ -45,7 +69,7 @@ data Event
     = EventMessage
         { eChatId :: !ChatId
         , eMessageId :: !MessageId
-        , eMessage :: !Text }
+        , eMessage :: !RichText }
     | EventSticker
         { eChatId :: !ChatId
         , eSticker :: !FileId }
@@ -75,9 +99,17 @@ data QueryButton
 data Handle
     = Handle
         { poll :: IO [Event]
-        , sendMessage :: ChatId -> Text -> [QueryButton] -> IO (Either Text MessageId)
+        , sendMessage :: ChatId -> RichText -> [QueryButton] -> IO (Either Text MessageId)
         , sendSticker :: ChatId -> FileId -> IO (Either Text ())
         , sendMedia :: ChatId -> Text -> Media -> IO (Either Text ())
         , sendMediaGroup :: ChatId -> MediaGroup -> IO (Either Text ())
-        , updateMessage :: ChatId -> MessageId -> Text -> [QueryButton] -> IO (Either Text ())
+        , updateMessage :: ChatId -> MessageId -> RichText -> [QueryButton] -> IO (Either Text ())
         , answerQuery :: QueryId -> Text -> IO (Either Text ()) }
+
+
+plainText :: Text -> RichText
+plainText text = RichTextSpan plainStyle text RichTextEnd
+
+
+plainStyle :: SpanStyle
+plainStyle = SpanStyle False False False False

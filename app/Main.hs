@@ -61,6 +61,9 @@ withLogger (MultiLoggerConfig logs) body = do
         withLogger a $ \la -> do
             withMulti rest $ \lrest -> do
                 Logger.withMultiLogger la lrest body
+withLogger (FilterLoggerConfig (LogLevelConfig level) log) body = do
+    withLogger log $ \la -> do
+        body $ Logger.loggerFilter level la
 
 
 withResponder :: ResponderConfig -> Logger.Handle -> Channel.Handle -> (Responder.Handle -> IO r) -> IO r
@@ -89,6 +92,7 @@ data LoggerConfig
     | StdLoggerConfig
     | FileLoggerConfig FilePath
     | MultiLoggerConfig [LoggerConfig]
+    | FilterLoggerConfig LogLevelConfig LoggerConfig
     deriving (Show)
 
 
@@ -141,10 +145,15 @@ instance FromJSON LoggerConfig where
         asObject = withObject "LoggerConfig" $ \v -> do
             (parser, obj) <- msum
                 [ (,) parseFile <$> v .: "file"
+                , (,) parseFilter <$> v .: "filter"
                 ]
             parser obj
         parseFile = withText "FileLoggerConfig" $ \path -> do
             return $ FileLoggerConfig (Text.unpack path)
+        parseFilter = withObject "FilterLoggerConfig" $ \v -> do
+            level <- v .:? "level" .!= LogLevelConfig Logger.Debug
+            target <- v .: "of"
+            return $ FilterLoggerConfig level target
 
 
 instance FromJSON ResponderConfig where
