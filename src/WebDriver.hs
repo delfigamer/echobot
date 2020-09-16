@@ -8,6 +8,7 @@ module WebDriver
     ( Address(..)
     , Handle(..)
     , withWebDriver
+    , (=:)
     ) where
 
 
@@ -18,6 +19,7 @@ import Control.Monad.IO.Class (MonadIO(..))
 import Data.Aeson
 import Data.Aeson.Text
 import Network.HTTP.Req
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy as TextLazy
 import qualified System.IO as IO
@@ -31,7 +33,9 @@ data Address
 
 data Handle
     = Handle
-        { request :: forall a b . (ToJSON a, FromJSON b) => Address -> a -> IO b }
+        { request :: forall a b . (ToJSON a, FromJSON b) => Address -> a -> IO b
+        , download :: Address -> [(Text.Text, Text.Text)] -> IO BSL.ByteString
+        , upload :: forall b . (FromJSON b) => Address -> BSL.ByteString -> IO b }
 
 
 {--}
@@ -40,7 +44,10 @@ data Handle
 withWebDriver :: Logger.Handle -> (Handle -> IO r) -> IO r
 withWebDriver logger body = do
     body $ Handle
-        { request = webRequest logger }
+        { request = webRequest logger
+        , download = webDownload logger
+        , upload = webUpload logger
+        }
 
 
 webRequest :: (ToJSON a, FromJSON b) => Logger.Handle -> Address -> a -> IO b
@@ -58,6 +65,41 @@ webRequest logger (HttpsAddress root nodes) params = do
     let value = responseBody resp :: Value
     Logger.info logger $
         "WebDriver: Response received"
+    webDecodeJson logger $ responseBody resp
+
+
+webDownload :: Logger.Handle -> Address -> [(Text.Text, Text.Text)] -> IO BSL.ByteString
+webDownload logger (HttpsAddress root nodes) qparams = do
+    Logger.info logger $
+        "WebDriver: Download a file from " <> root
+    resp <- runReq defaultHttpConfig $ req
+        GET
+        (foldl (/:) (https root) nodes)
+        NoReqBody
+        lbsResponse
+        (foldMap (uncurry (=:)) qparams)
+    Logger.info logger $
+        "WebDriver: Response received"
+    return $ responseBody resp
+
+
+webUpload :: FromJSON b => Logger.Handle -> Address -> BSL.ByteString -> IO b
+webUpload logger (HttpsAddress root nodes) content = do
+    Logger.info logger $
+        "WebDriver: Upload a file to " <> root
+    resp <- runReq defaultHttpConfig $ req
+        POST
+        (foldl (/:) (https root) nodes)
+        (ReqBodyLbs content)
+        jsonResponse
+        mempty
+    Logger.info logger $
+        "WebDriver: Response received"
+    webDecodeJson logger $ responseBody resp
+
+
+webDecodeJson :: FromJSON b => Logger.Handle -> Value -> IO b
+webDecodeJson logger value = do
     Logger.debug logger $
         "WebDriver: \t" <> encodeToText value
     case fromJSON value of

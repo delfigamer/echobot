@@ -7,8 +7,9 @@ module Channel
     , QueryUserdata
     , SpanStyle(..)
     , RichText(..)
-    , MediaGroup(..)
-    , Media(..)
+    , MediaType(..)
+    , ForeignMedia(..)
+    , SendableMedia(..)
     , Event(..)
     , QueryButton(..)
     , Handle(..)
@@ -48,20 +49,24 @@ data RichText
     deriving (Show, Eq)
 
 
-data MediaGroup
-    = MediaGroupPhoto !Text !FileId !MediaGroup
-    | MediaGroupVideo !Text !FileId !MediaGroup
-    | MediaGroupEnd
+data MediaType
+    = MediaPhoto
+    | MediaVideo
+    | MediaAudio
+    | MediaAnimation
+    | MediaVoice
+    | MediaSticker
+    | MediaDocument
     deriving (Show, Eq)
 
 
-data Media
-    = MediaPhoto !FileId
-    | MediaVideo !FileId
-    | MediaAudio !FileId
-    | MediaAnimation !FileId
-    | MediaVoice !FileId
-    | MediaDocument !FileId
+data ForeignMedia
+    = ForeignMedia !MediaType !Text !Text
+    deriving (Show, Eq)
+
+
+data SendableMedia
+    = SendableMedia !MediaType !Text
     deriving (Show, Eq)
 
 
@@ -70,17 +75,10 @@ data Event
         { eChatId :: !ChatId
         , eMessageId :: !MessageId
         , eMessage :: !RichText }
-    | EventSticker
-        { eChatId :: !ChatId
-        , eSticker :: !FileId }
     | EventMedia
         { eChatId :: !ChatId
         , eCaption :: !Text
-        , eMedia :: !Media }
-    | EventMediaGroup
-        { eChatId :: !ChatId
-        , eGroupId :: !MediaGroupId
-        , eGroup :: !MediaGroup }
+        , eMedia :: [ForeignMedia] }
     | EventQuery
         { eChatId :: !ChatId
         , eMessageId :: !MessageId
@@ -99,10 +97,9 @@ data QueryButton
 data Handle
     = Handle
         { poll :: IO [Event]
-        , sendMessage :: ChatId -> RichText -> [QueryButton] -> IO (Either Text MessageId)
-        , sendSticker :: ChatId -> FileId -> IO (Either Text ())
-        , sendMedia :: ChatId -> Text -> Media -> IO (Either Text ())
-        , sendMediaGroup :: ChatId -> MediaGroup -> IO (Either Text ())
+        , sendMessage :: ChatId -> RichText -> [QueryButton] -> IO (Either Text ())
+        , sendMedia :: ChatId -> Text -> [SendableMedia] -> IO (Either Text ())
+        , possessMedia :: ForeignMedia -> IO (Either Text SendableMedia)
         , updateMessage :: ChatId -> MessageId -> RichText -> [QueryButton] -> IO (Either Text ())
         , answerQuery :: QueryId -> Text -> IO (Either Text ()) }
 

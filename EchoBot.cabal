@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: bd1ef2b2e3262147a68c202da76f3b0a1f3de8fb9e4d5880f9a20cd1395b0be9
+-- hash: 135f729a9ee3641da783b8834e8ed085db5881144ded2bbd0929eed0cdd56b1f
 
 name:           EchoBot
 version:        0.1.0.0
@@ -29,6 +29,7 @@ library
   exposed-modules:
       Channel
       Channel.Tg
+      Channel.Vk
       Logger
       Responder
       Responder.Repeat
