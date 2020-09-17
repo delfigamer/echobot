@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 135f729a9ee3641da783b8834e8ed085db5881144ded2bbd0929eed0cdd56b1f
+-- hash: 09779460780e67492c9b62a9b9f0a5a786bd8ccde67cb91ef55fb813cc9ffa4d
 
 name:           EchoBot
 version:        0.1.0.0
@@ -30,6 +30,7 @@ library
       Channel
       Channel.Tg
       Channel.Vk
+      Channel.Vk.Internal
       Logger
       Responder
       Responder.Repeat
@@ -46,6 +47,9 @@ library
     , hashtables >=1.2.3 && <2
     , hspec >=2.7.2 && <3
     , hspec-expectations >=0.8.2 && <1
+    , http-client >=0.6.4 && <1
+    , megaparsec >=8.0 && <9
+    , modern-uri >=0.3.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
     , time >=1.9 && <2
@@ -71,6 +75,9 @@ executable EchoBot-exe
     , hashtables >=1.2.3 && <2
     , hspec >=2.7.2 && <3
     , hspec-expectations >=0.8.2 && <1
+    , http-client >=0.6.4 && <1
+    , megaparsec >=8.0 && <9
+    , modern-uri >=0.3.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
     , time >=1.9 && <2
@@ -85,6 +92,7 @@ test-suite EchoBot-test
   main-is: Spec.hs
   other-modules:
       Channel.TgSpec
+      Channel.VkSpec
       Responder.RepeatSpec
       Paths_EchoBot
   hs-source-dirs:
@@ -99,6 +107,9 @@ test-suite EchoBot-test
     , hashtables >=1.2.3 && <2
     , hspec >=2.7.2 && <3
     , hspec-expectations >=0.8.2 && <1
+    , http-client >=0.6.4 && <1
+    , megaparsec >=8.0 && <9
+    , modern-uri >=0.3.2 && <1
     , req >=3.2 && <4
     , text >=1.2 && <2
     , time >=1.9 && <2

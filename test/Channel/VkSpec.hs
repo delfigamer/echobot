@@ -6,7 +6,7 @@
 
 module Channel.VkSpec
     (
-    -- spec
+    spec
     ) where
 
 
@@ -32,8 +32,8 @@ import qualified WebDriver
 
 data ExpectedRequest
     = ExpectedRequest !WebDriver.Address !Value !Value
-    | ExpectedDownload !WebDriver.Address ![(Text, Text)] !BSL.ByteString
-    | ExpectedUpload !WebDriver.Address !BSL.ByteString !Value
+    | ExpectedDownload !Text !BSL.ByteString
+    | ExpectedUpload !Text [WebDriver.Part] !Value
     deriving (Show)
 
 
@@ -62,20 +62,20 @@ testDriverRequest pbuf address params = do
 
 
 testDriverDownload
-    :: IORef [ExpectedRequest] -> WebDriver.Address -> [(Text, Text)] -> IO BSL.ByteString
-testDriverDownload pbuf address qparams = do
-    ExpectedDownload address2 qparams2 result:rest <- readIORef pbuf
-    (address, qparams) `shouldBe` (address2, qparams2)
+    :: IORef [ExpectedRequest] -> Text -> IO BSL.ByteString
+testDriverDownload pbuf address = do
+    ExpectedDownload address2 result:rest <- readIORef pbuf
+    (address) `shouldBe` (address2)
     writeIORef pbuf $! rest
     return $ result
 
 
 testDriverUpload
     :: (FromJSON b)
-    => IORef [ExpectedRequest] -> WebDriver.Address -> BSL.ByteString -> IO b
-testDriverUpload pbuf address content = do
-    ExpectedUpload address2 content2 result:rest <- readIORef pbuf
-    (address, content) `shouldBe` (address2, content2)
+    => IORef [ExpectedRequest] -> Text -> [WebDriver.Part] -> IO b
+testDriverUpload pbuf address parts = do
+    ExpectedUpload address2 parts2 result:rest <- readIORef pbuf
+    (address, parts) `shouldBe` (address2, parts2)
     writeIORef pbuf $! rest
     case fromJSON result of
         Error err -> fail err
@@ -414,7 +414,7 @@ spec = do
                                 ]
                             , Channel.EventMedia (groupChatId 300) ""
                                 [ Channel.ForeignMedia Channel.MediaPhoto "photo17_30" "https://srv.userapi.com/group/file6.jpg"
-                                , Channel.ForeignMedia Channel.MediaPhoto "" "https://srv.userapi.com/group/file7.jpg"
+                                , Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"
                                 ]
                             ]
                         perform prequestbuf
@@ -492,6 +492,290 @@ spec = do
                                 ]
                             , Channel.EventMedia (groupChatId 300) ""
                                 [ Channel.ForeignMedia Channel.MediaVideo "video17_30" ""
+                                , Channel.ForeignMedia Channel.MediaVideo "!video18_40_efef" ""
+                                ]
+                            ]
+                        perform prequestbuf
+                            (Channel.poll channel)
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
+                                (object
+                                    [ "key" .= String "lpkey"
+                                    , "ts" .= String "30"
+                                    , "act" .= String  "a_check"
+                                    , "wait" .= timeout
+                                    ])
+                                (object
+                                    [ "ts" .= String "40"
+                                    , "updates" .=
+                                        [ object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number 100
+                                                    , "conversation_message_id" .= Number 10
+                                                    , "attachments" .=
+                                                        [ object
+                                                            [ "type" .= String "audio"
+                                                            , "audio" .= object
+                                                                [ "owner_id" .= Number 50
+                                                                , "id" .= Number 60
+                                                                , "url" .= String "https://psv1.vkuseraudio.net/c1/u2/audios/abcd.mp3?extra=_1_2_3&long_chunk=1"
+                                                                ]
+                                                            ]
+                                                        , object
+                                                            [ "type" .= String "audio"
+                                                            , "audio" .= object
+                                                                [ "owner_id" .= Number 70
+                                                                , "id" .= Number 80
+                                                                ]
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        , object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number (groupChatId 300)
+                                                    , "conversation_message_id" .= Number 12
+                                                    , "attachments" .=
+                                                        [ object
+                                                            [ "type" .= String "audio"
+                                                            , "audio" .= object
+                                                                [ "owner_id" .= Number 17
+                                                                , "id" .= Number 30
+                                                                ]
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ])
+                            ]
+                            [ Channel.EventMedia 100 ""
+                                [ Channel.ForeignMedia Channel.MediaAudio "audio50_60" "https://psv1.vkuseraudio.net/c1/u2/audios/abcd.mp3?extra=_1_2_3&long_chunk=1"
+                                , Channel.ForeignMedia Channel.MediaAudio "audio70_80" ""
+                                ]
+                            , Channel.EventMedia (groupChatId 300) ""
+                                [ Channel.ForeignMedia Channel.MediaAudio "audio17_30" ""
+                                ]
+                            ]
+                        perform prequestbuf
+                            (Channel.poll channel)
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
+                                (object
+                                    [ "key" .= String "lpkey"
+                                    , "ts" .= String "40"
+                                    , "act" .= String  "a_check"
+                                    , "wait" .= timeout
+                                    ])
+                                (object
+                                    [ "ts" .= String "50"
+                                    , "updates" .=
+                                        [ object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number 100
+                                                    , "conversation_message_id" .= Number 10
+                                                    , "attachments" .=
+                                                        [ object
+                                                            [ "type" .= String "doc"
+                                                            , "doc" .= object
+                                                                [ "owner_id" .= Number 50
+                                                                , "id" .= Number 60
+                                                                , "url" .= String "https://vk.com/doc50_60?hash=1&dl=2&api=1&no_preview=1"
+                                                                ]
+                                                            ]
+                                                        , object
+                                                            [ "type" .= String "doc"
+                                                            , "doc" .= object
+                                                                [ "owner_id" .= Number 70
+                                                                , "id" .= Number 80
+                                                                , "access_key" .= String "abab"
+                                                                , "url" .= String "https://vk.com/doc70_80?hash=1&dl=2&api=1&no_preview=1"
+                                                                ]
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        , object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number (groupChatId 300)
+                                                    , "conversation_message_id" .= Number 12
+                                                    , "attachments" .=
+                                                        [ object
+                                                            [ "type" .= String "doc"
+                                                            , "doc" .= object
+                                                                [ "owner_id" .= Number 17
+                                                                , "id" .= Number 30
+                                                                , "url" .= String "https://vk.com/doc17_30?hash=1&dl=2&api=1&no_preview=1"
+                                                                ]
+                                                            ]
+                                                        , object
+                                                            [ "type" .= String "doc"
+                                                            , "doc" .= object
+                                                                [ "owner_id" .= Number 18
+                                                                , "id" .= Number 40
+                                                                , "access_key" .= String "efef"
+                                                                , "url" .= String "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"
+                                                                ]
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ])
+                            ]
+                            [ Channel.EventMedia 100 ""
+                                [ Channel.ForeignMedia Channel.MediaDocument "doc50_60" "https://vk.com/doc50_60?hash=1&dl=2&api=1&no_preview=1"
+                                , Channel.ForeignMedia Channel.MediaDocument "doc70_80_abab" "https://vk.com/doc70_80?hash=1&dl=2&api=1&no_preview=1"
+                                ]
+                            , Channel.EventMedia (groupChatId 300) ""
+                                [ Channel.ForeignMedia Channel.MediaDocument "doc17_30" "https://vk.com/doc17_30?hash=1&dl=2&api=1&no_preview=1"
+                                , Channel.ForeignMedia Channel.MediaDocument "!doc18_40_efef" "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"
+                                ]
+                            ]
+                        perform prequestbuf
+                            (Channel.poll channel)
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
+                                (object
+                                    [ "key" .= String "lpkey"
+                                    , "ts" .= String "50"
+                                    , "act" .= String  "a_check"
+                                    , "wait" .= timeout
+                                    ])
+                                (object
+                                    [ "ts" .= String "60"
+                                    , "updates" .=
+                                        [ object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number 100
+                                                    , "conversation_message_id" .= Number 10
+                                                    , "attachments" .=
+                                                        [ object
+                                                            [ "type" .= String "sticker"
+                                                            , "sticker" .= object
+                                                                [ "sticker_id" .= Number 450
+                                                                ]
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ])
+                            ]
+                            [ Channel.EventMedia 100 ""
+                                [ Channel.ForeignMedia Channel.MediaSticker "450" ""
+                                ]
+                            ]
+                        perform prequestbuf
+                            (Channel.poll channel)
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
+                                (object
+                                    [ "key" .= String "lpkey"
+                                    , "ts" .= String "60"
+                                    , "act" .= String  "a_check"
+                                    , "wait" .= timeout
+                                    ])
+                                (object
+                                    [ "ts" .= String "70"
+                                    , "updates" .=
+                                        [ object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number 100
+                                                    , "conversation_message_id" .= Number 10
+                                                    , "attachments" .=
+                                                        [ object
+                                                            [ "type" .= String "audio_message"
+                                                            , "audio_message" .= object
+                                                                [ "owner_id" .= Number 50
+                                                                , "id" .= Number 60
+                                                                , "access_key" .= String "abab"
+                                                                , "link_ogg" .= String "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"
+                                                                ]
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        , object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number (groupChatId 300)
+                                                    , "conversation_message_id" .= Number 12
+                                                    , "attachments" .=
+                                                        [ object
+                                                            [ "type" .= String "audio_message"
+                                                            , "audio_message" .= object
+                                                                [ "owner_id" .= Number 18
+                                                                , "id" .= Number 40
+                                                                , "access_key" .= String "efef"
+                                                                , "link_ogg" .= String "https://psv1.userapi.com/c1//u2/audiomsg/d1/60.ogg"
+                                                                ]
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ])
+                            ]
+                            [ Channel.EventMedia 100 ""
+                                [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"
+                                ]
+                            , Channel.EventMedia (groupChatId 300) ""
+                                [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/60.ogg"
+                                ]
+                            ]
+                        perform prequestbuf
+                            (Channel.poll channel)
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
+                                (object
+                                    [ "key" .= String "lpkey"
+                                    , "ts" .= String "70"
+                                    , "act" .= String  "a_check"
+                                    , "wait" .= timeout
+                                    ])
+                                (object
+                                    [ "ts" .= String "80"
+                                    , "updates" .=
+                                        [ object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number 100
+                                                    , "conversation_message_id" .= Number 10
+                                                    , "attachments" .=
+                                                        [ object
+                                                            [ "type" .= String "unknown_type"
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ])
+                            ]
+                            [ Channel.EventMedia 100 ""
+                                [ Channel.ForeignMedia Channel.MediaUnknown "unknown_type" ""
                                 ]
                             ]
                         {- attachents with an access_key that come from group chats are busted, see Channel.Vk.Internal for a more detailed explanation -}

@@ -281,33 +281,29 @@ instance FromJSON VkUpdate where
                         { Channel.eChatId = chatId
                         , Channel.eCaption = text
                         , Channel.eMedia = if chatId >= 2000000000
-                            then concatMap getPossessableForeignMedia attachments
-                            else concatMap getResendableForeignMedia attachments
+                            then map getPossessableForeignMedia attachments
+                            else map getResendableForeignMedia attachments
                         }
-        getResendableForeignMedia VkForeignMediaUnknown = []
-        getResendableForeignMedia (VkForeignMedia media) = [media]
-        getPossessableForeignMedia VkForeignMediaUnknown = []
-        getPossessableForeignMedia (VkForeignMedia (Channel.ForeignMedia mediaType mediaId mediaUrl)) = do
-            if Text.count "_" mediaId == 1
-                then [Channel.ForeignMedia mediaType mediaId mediaUrl]
-                else if Text.null mediaUrl
-                    then []
-                    else [Channel.ForeignMedia mediaType "" mediaUrl]
+        getResendableForeignMedia (VkForeignMedia media) = media
+        getPossessableForeignMedia (VkForeignMedia media@(Channel.ForeignMedia mediaType mediaId mediaUrl)) = do
+            if Text.count "_" mediaId == 2
+                then Channel.ForeignMedia mediaType ("!" <> mediaId) mediaUrl
+                else media
 {-
 A non-obvious feature: when a message comes from a group chat (peer_id >= 2000000000), the access_key of its attachments is unusable.
 That is, if you try to re-send the media with the corresponding set of (owner_id, id, access_key), it won't work.
+We mark such attachments with a prefix "!" in front of their mediaId.
 Attachments that come from personal chats (0 <= peer_id < 1000000000) work fine.
 Attachments from group chats without an access_key - that is, public attachments - also work.
 So, the problem affects specifically attachments that both come from a group chat, and have a non-empty access_key.
 The only way to re-send such media is to download it through from the server, upload the file again and then send it as your own media.
 Not all types of media can be directly downloaded, however (videos), so sometimes the download url will be missing as well.
-This can produce attachments that are technically known to us, but are completely unusable: their mediaId wouldn't work, and there is no download url. We filter those out.
+This can produce attachments that are technically known to us, but are completely unusable: their mediaId wouldn't work, and there is no download url.
 -}
 
 
-data VkForeignMedia
-    = VkForeignMedia !Channel.ForeignMedia
-    | VkForeignMediaUnknown
+newtype VkForeignMedia
+    = VkForeignMedia Channel.ForeignMedia
 
 
 instance FromJSON VkForeignMedia where
@@ -316,7 +312,11 @@ instance FromJSON VkForeignMedia where
         case typename :: Text.Text of
             "photo" -> v .: "photo" >>= parsePhoto
             "video" -> v .: "video" >>= parseVideo
-            _ -> return $ VkForeignMediaUnknown
+            "audio" -> v .: "audio" >>= parseAudio
+            "doc" -> v .: "doc" >>= parseDoc
+            "sticker" -> v .: "sticker" >>= parseSticker
+            "audio_message" -> v .: "audio_message" >>= parseVoice
+            _ -> return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaUnknown typename ""
         where
         parsePhoto = withObject "VkForeignMediaPhoto" $ \v -> do
             mediaId <- getMediaId "photo" v
@@ -331,15 +331,30 @@ instance FromJSON VkForeignMedia where
         parseVideo = withObject "VkForeignMediaPhoto" $ \v -> do
             mediaId <- getMediaId "video" v
             return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaVideo mediaId ""
+        parseAudio = withObject "VkForeignMediaAudio" $ \v -> do
+            mediaId <- getMediaId "audio" v
+            url <- v .:? "url" .!= ""
+            return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaAudio mediaId url
+        parseDoc = withObject "VkForeignMediaDocument" $ \v -> do
+            mediaId <- getMediaId "doc" v
+            url <- v .:? "url" .!= ""
+            return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaDocument mediaId url
+        parseSticker = withObject "VkForeignMediaSticker" $ \v -> do
+            stickerId <- v .: "sticker_id"
+            let stickerIdStr = show (stickerId :: Integer)
+            return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaSticker (Text.pack stickerIdStr) ""
+        parseVoice = withObject "VkForeignMediaVoice" $ \v -> do
+            url <- v .: "link_ogg"
+            return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaVoice "" url
         getMediaId typename v = do
             ownerId <- v .: "owner_id"
-            let _ = ownerId :: Integer
+            let ownerIdStr = show (ownerId :: Integer)
             localId <- v .: "id"
-            let _ = localId :: Integer
+            let localIdStr = show (localId :: Integer)
             maccessKey <- v .:? "access_key"
             case maccessKey of
-                Nothing -> return $ Text.pack $ typename <> show ownerId <> "_" <> show localId
-                Just accessKey -> return $ Text.pack $ typename <> show ownerId <> "_" <> show localId <> "_" <> accessKey
+                Nothing -> return $ Text.pack $ typename <> ownerIdStr <> "_" <> localIdStr
+                Just accessKey -> return $ Text.pack $ typename <> ownerIdStr <> "_" <> localIdStr <> "_" <> accessKey
 
 
 data VkPhotoSize

@@ -57,6 +57,7 @@ data MediaType
     | MediaVoice
     | MediaSticker
     | MediaDocument
+    | MediaUnknown
     deriving (Show, Eq)
 
 

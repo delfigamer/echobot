@@ -27,6 +27,9 @@ dependencies:
 - hashtables >= 1.2.3 && < 2
 - hspec >= 2.7.2 && < 3
 - hspec-expectations >= 0.8.2 && < 1
+- http-client >= 0.6.4 && < 1
+- megaparsec >= 8.0 && < 9
+- modern-uri >= 0.3.2 && < 1
 - req >= 3.2 && < 4
 - text >= 1.2 && < 2
 - time >= 1.9 && < 2
