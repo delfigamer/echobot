@@ -12,6 +12,7 @@ module Channel
     , SendableMedia(..)
     , Event(..)
     , QueryButton(..)
+    , PossessMediaOutcome(..)
     , Handle(..)
     , plainText
     , plainStyle
@@ -95,12 +96,20 @@ data QueryButton
     deriving (Show, Eq)
 
 
+data PossessMediaOutcome
+    = PossessMediaSuccess !SendableMedia
+    | PossessMediaUnknownType !Text
+    | PossessMediaUnsupported
+    | PossessMediaInternalError
+    deriving (Show, Eq)
+
+
 data Handle
     = Handle
         { poll :: IO [Event]
         , sendMessage :: ChatId -> RichText -> [QueryButton] -> IO (Either Text ())
         , sendMedia :: ChatId -> Text -> [SendableMedia] -> IO (Either Text ())
-        , possessMedia :: ForeignMedia -> IO (Either Text SendableMedia)
+        , possessMedia :: ChatId -> ForeignMedia -> IO PossessMediaOutcome
         , updateMessage :: ChatId -> MessageId -> RichText -> [QueryButton] -> IO (Either Text ())
         , answerQuery :: QueryId -> Text -> IO (Either Text ()) }
 

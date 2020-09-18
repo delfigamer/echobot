@@ -5,8 +5,7 @@
 
 
 module Channel.VkSpec
-    (
-    spec
+    ( spec
     ) where
 
 
@@ -15,6 +14,7 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Aeson
+import Data.Either
 import Data.IORef
 import Data.Maybe
 import Data.Text (Text)
@@ -87,14 +87,14 @@ perform
     => IORef [ExpectedRequest]
     -> IO r
     -> [ExpectedRequest]
-    -> r
-    -> IO ()
-perform pbuf act reqs expret = do
+    -> (r -> IO q)
+    -> IO q
+perform pbuf act reqs rettest = do
     writeIORef pbuf $! reqs
     ret <- act
     bufrest <- readIORef pbuf
     bufrest `shouldSatisfy` null
-    ret `shouldBe` expret
+    rettest ret
 
 
 spec :: Spec
@@ -142,7 +142,7 @@ spec = do
                                     , "updates" .= Array mempty
                                     ])
                             ]
-                            []
+                            (`shouldBe` [])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
@@ -158,7 +158,7 @@ spec = do
                                     , "updates" .= Array mempty
                                     ])
                             ]
-                            []
+                            (`shouldBe` [])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
@@ -174,7 +174,7 @@ spec = do
                                     , "failed" .= Number 1
                                     ])
                             ]
-                            []
+                            (`shouldBe` [])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
@@ -215,7 +215,7 @@ spec = do
                                     , "updates" .= Array mempty
                                     ])
                             ]
-                            []
+                            (`shouldBe` [])
         it "receives plain text messages" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \prequestbuf driver -> do
@@ -270,9 +270,10 @@ spec = do
                                         ]
                                     ])
                             ]
-                            [ Channel.EventMessage 100 10 $ Channel.plainText "100 message text"
-                            , Channel.EventMessage 200 11 $ Channel.plainText "200 message text"
-                            ]
+                            (`shouldBe`
+                                [ Channel.EventMessage 100 10 $ Channel.plainText "100 message text"
+                                , Channel.EventMessage 200 11 $ Channel.plainText "200 message text"
+                                ])
         it "receives media messages" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \prequestbuf driver -> do
@@ -404,19 +405,20 @@ spec = do
                                         ]
                                     ])
                             ]
-                            [ Channel.EventMedia 100 "100 message text"
-                                [ Channel.ForeignMedia Channel.MediaPhoto "photo50_60" "https://srv.userapi.com/group/file2.jpg"
-                                , Channel.ForeignMedia Channel.MediaPhoto "photo70_80_beef" "https://srv.userapi.com/group/file4.jpg"
-                                ]
-                            , Channel.EventMedia 200 ""
-                                [ Channel.ForeignMedia Channel.MediaPhoto "photo15_20_abab" "https://srv.userapi.com/group/file5.jpg"
-                                , Channel.ForeignMedia Channel.MediaPhoto "photo16_25_cdcd" ""
-                                ]
-                            , Channel.EventMedia (groupChatId 300) ""
-                                [ Channel.ForeignMedia Channel.MediaPhoto "photo17_30" "https://srv.userapi.com/group/file6.jpg"
-                                , Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"
-                                ]
-                            ]
+                            (`shouldBe`
+                                [ Channel.EventMedia 100 "100 message text"
+                                    [ Channel.ForeignMedia Channel.MediaPhoto "photo50_60" "https://srv.userapi.com/group/file2.jpg"
+                                    , Channel.ForeignMedia Channel.MediaPhoto "photo70_80_beef" "https://srv.userapi.com/group/file4.jpg"
+                                    ]
+                                , Channel.EventMedia 200 ""
+                                    [ Channel.ForeignMedia Channel.MediaPhoto "photo15_20_abab" "https://srv.userapi.com/group/file5.jpg"
+                                    , Channel.ForeignMedia Channel.MediaPhoto "photo16_25_cdcd" ""
+                                    ]
+                                , Channel.EventMedia (groupChatId 300) ""
+                                    [ Channel.ForeignMedia Channel.MediaPhoto "photo17_30" "https://srv.userapi.com/group/file6.jpg"
+                                    , Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"
+                                    ]
+                                ])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
@@ -486,15 +488,16 @@ spec = do
                                         ]
                                     ])
                             ]
-                            [ Channel.EventMedia 100 "100 message text"
-                                [ Channel.ForeignMedia Channel.MediaVideo "video50_60" ""
-                                , Channel.ForeignMedia Channel.MediaVideo "video70_80_beef" ""
-                                ]
-                            , Channel.EventMedia (groupChatId 300) ""
-                                [ Channel.ForeignMedia Channel.MediaVideo "video17_30" ""
-                                , Channel.ForeignMedia Channel.MediaVideo "!video18_40_efef" ""
-                                ]
-                            ]
+                            (`shouldBe`
+                                [ Channel.EventMedia 100 "100 message text"
+                                    [ Channel.ForeignMedia Channel.MediaVideo "video50_60" ""
+                                    , Channel.ForeignMedia Channel.MediaVideo "video70_80_beef" ""
+                                    ]
+                                , Channel.EventMedia (groupChatId 300) ""
+                                    [ Channel.ForeignMedia Channel.MediaVideo "video17_30" ""
+                                    , Channel.ForeignMedia Channel.MediaVideo "!video18_40_efef" ""
+                                    ]
+                                ])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
@@ -555,14 +558,15 @@ spec = do
                                         ]
                                     ])
                             ]
-                            [ Channel.EventMedia 100 ""
-                                [ Channel.ForeignMedia Channel.MediaAudio "audio50_60" "https://psv1.vkuseraudio.net/c1/u2/audios/abcd.mp3?extra=_1_2_3&long_chunk=1"
-                                , Channel.ForeignMedia Channel.MediaAudio "audio70_80" ""
-                                ]
-                            , Channel.EventMedia (groupChatId 300) ""
-                                [ Channel.ForeignMedia Channel.MediaAudio "audio17_30" ""
-                                ]
-                            ]
+                            (`shouldBe`
+                                [ Channel.EventMedia 100 ""
+                                    [ Channel.ForeignMedia Channel.MediaAudio "audio50_60" "https://psv1.vkuseraudio.net/c1/u2/audios/abcd.mp3?extra=_1_2_3&long_chunk=1"
+                                    , Channel.ForeignMedia Channel.MediaAudio "audio70_80" ""
+                                    ]
+                                , Channel.EventMedia (groupChatId 300) ""
+                                    [ Channel.ForeignMedia Channel.MediaAudio "audio17_30" ""
+                                    ]
+                                ])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
@@ -635,15 +639,16 @@ spec = do
                                         ]
                                     ])
                             ]
-                            [ Channel.EventMedia 100 ""
-                                [ Channel.ForeignMedia Channel.MediaDocument "doc50_60" "https://vk.com/doc50_60?hash=1&dl=2&api=1&no_preview=1"
-                                , Channel.ForeignMedia Channel.MediaDocument "doc70_80_abab" "https://vk.com/doc70_80?hash=1&dl=2&api=1&no_preview=1"
-                                ]
-                            , Channel.EventMedia (groupChatId 300) ""
-                                [ Channel.ForeignMedia Channel.MediaDocument "doc17_30" "https://vk.com/doc17_30?hash=1&dl=2&api=1&no_preview=1"
-                                , Channel.ForeignMedia Channel.MediaDocument "!doc18_40_efef" "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"
-                                ]
-                            ]
+                            (`shouldBe`
+                                [ Channel.EventMedia 100 ""
+                                    [ Channel.ForeignMedia Channel.MediaDocument "doc50_60" "https://vk.com/doc50_60?hash=1&dl=2&api=1&no_preview=1"
+                                    , Channel.ForeignMedia Channel.MediaDocument "doc70_80_abab" "https://vk.com/doc70_80?hash=1&dl=2&api=1&no_preview=1"
+                                    ]
+                                , Channel.EventMedia (groupChatId 300) ""
+                                    [ Channel.ForeignMedia Channel.MediaDocument "doc17_30" "https://vk.com/doc17_30?hash=1&dl=2&api=1&no_preview=1"
+                                    , Channel.ForeignMedia Channel.MediaDocument "!doc18_40_efef" "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"
+                                    ]
+                                ])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
@@ -677,10 +682,11 @@ spec = do
                                         ]
                                     ])
                             ]
-                            [ Channel.EventMedia 100 ""
-                                [ Channel.ForeignMedia Channel.MediaSticker "450" ""
-                                ]
-                            ]
+                            (`shouldBe`
+                                [ Channel.EventMedia 100 ""
+                                    [ Channel.ForeignMedia Channel.MediaSticker "450" ""
+                                    ]
+                                ])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
@@ -737,13 +743,14 @@ spec = do
                                         ]
                                     ])
                             ]
-                            [ Channel.EventMedia 100 ""
-                                [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"
-                                ]
-                            , Channel.EventMedia (groupChatId 300) ""
-                                [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/60.ogg"
-                                ]
-                            ]
+                            (`shouldBe`
+                                [ Channel.EventMedia 100 ""
+                                    [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"
+                                    ]
+                                , Channel.EventMedia (groupChatId 300) ""
+                                    [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/60.ogg"
+                                    ]
+                                ])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
@@ -774,11 +781,272 @@ spec = do
                                         ]
                                     ])
                             ]
-                            [ Channel.EventMedia 100 ""
-                                [ Channel.ForeignMedia Channel.MediaUnknown "unknown_type" ""
-                                ]
-                            ]
+                            (`shouldBe`
+                                [ Channel.EventMedia 100 ""
+                                    [ Channel.ForeignMedia Channel.MediaUnknown "unknown_type" ""
+                                    ]
+                                ])
                         {- attachents with an access_key that come from group chats are busted, see Channel.Vk.Internal for a more detailed explanation -}
+        it "re-posesses photos" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "photo17_30_cdcd" "https://srv.userapi.com/group/file6.jpg"))
+                            []
+                            (flip shouldBe $
+                                Channel.PossessMediaSuccess $ Channel.SendableMedia Channel.MediaPhoto "photo17_30_cdcd")
+                        perform prequestbuf
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.getMessagesUploadServer"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "peer_id" .= Number 100
+                                    ])
+                                (object
+                                    [ "response" .= object
+                                        [ "upload_url" .= String "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
+                                        ]
+                                    ])
+                            , ExpectedDownload
+                                "https://srv.userapi.com/group/file7.jpg"
+                                "<contents of file7.jpg>"
+                            , ExpectedUpload
+                                "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
+                                [WebDriver.PartBSL "file" "<contents of file7.jpg>"]
+                                (object
+                                    [ "server" .= Number 1234
+                                    , "photo" .= String "{\"key\":\"value\"}"
+                                    , "hash" .= String "56ff"
+                                    ])
+                            , ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.saveMessagesPhoto"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "server" .= Number 1234
+                                    , "photo" .= String "{\"key\":\"value\"}"
+                                    , "hash" .= String "56ff"
+                                    ])
+                                (object
+                                    [ "response" .=
+                                        [ object
+                                            [ "owner_id" .= Number 10
+                                            , "id" .= Number 67
+                                            , "access_key" .= String "acdf"
+                                            ]
+                                        ]
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Channel.PossessMediaSuccess $ Channel.SendableMedia Channel.MediaPhoto "photo10_67_acdf")
+                        perform prequestbuf
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.getMessagesUploadServer"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "peer_id" .= Number 100
+                                    ])
+                                (object
+                                    [ "response" .= object
+                                        [ "upload_url" .= String "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
+                                        ]
+                                    ])
+                            , ExpectedDownload
+                                "https://srv.userapi.com/group/file7.jpg"
+                                "<contents of file7.jpg>"
+                            , ExpectedUpload
+                                "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
+                                [WebDriver.PartBSL "file" "<contents of file7.jpg>"]
+                                (object
+                                    [ "server" .= Number 1234
+                                    , "photo" .= String "{\"key\":\"value\"}"
+                                    , "hash" .= String "56ff"
+                                    ])
+                            , ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.saveMessagesPhoto"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "server" .= Number 1234
+                                    , "photo" .= String "{\"key\":\"value\"}"
+                                    , "hash" .= String "56ff"
+                                    ])
+                                (object
+                                    [ "response" .= Array mempty
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Channel.PossessMediaInternalError)
+                        perform prequestbuf
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.getMessagesUploadServer"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "peer_id" .= Number 100
+                                    ])
+                                (object
+                                    [ "response" .= object
+                                        [ "upload_url" .= String "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
+                                        ]
+                                    ])
+                            , ExpectedDownload
+                                "https://srv.userapi.com/group/file7.jpg"
+                                "<contents of file7.jpg>"
+                            , ExpectedUpload
+                                "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
+                                [WebDriver.PartBSL "file" "<contents of file7.jpg>"]
+                                (object
+                                    [ "server" .= Number 1234
+                                    , "photo" .= String "{\"key\":\"value\"}"
+                                    , "hash" .= String "56ff"
+                                    ])
+                            , ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.saveMessagesPhoto"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "server" .= Number 1234
+                                    , "photo" .= String "{\"key\":\"value\"}"
+                                    , "hash" .= String "56ff"
+                                    ])
+                                (object
+                                    [ "error" .= object ["error_msg" .= String "failed"]
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Channel.PossessMediaInternalError)
+                        perform prequestbuf
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.getMessagesUploadServer"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "peer_id" .= Number 100
+                                    ])
+                                (object
+                                    [ "error" .= object ["error_msg" .= String "failed"]
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Channel.PossessMediaInternalError)
+                        perform prequestbuf
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" ""))
+                            []
+                            (flip shouldBe $
+                                Channel.PossessMediaUnsupported)
+        it "re-posesses documents" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaDocument "!doc18_40_efef" "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"))
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "docs.getMessagesUploadServer"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "peer_id" .= Number 100
+                                    , "type" .= String "doc"
+                                    ])
+                                (object
+                                    [ "response" .= object
+                                        [ "upload_url" .= String "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
+                                        ]
+                                    ])
+                            , ExpectedDownload
+                                "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"
+                                "<contents of doc18_40>"
+                            , ExpectedUpload
+                                "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
+                                [WebDriver.PartBSL "file" "<contents of doc18_40>"]
+                                (object
+                                    [ "file" .= String "newdoc|5678cdef"
+                                    ])
+                            , ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "docs.save"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "file" .= String "newdoc|5678cdef"
+                                    ])
+                                (object
+                                    [ "response" .= object
+                                        [ "type" .= String "doc"
+                                        , "doc" .= object
+                                            [ "owner_id" .= Number 10
+                                            , "id" .= Number 67
+                                            , "access_key" .= String "acdf"
+                                            ]
+                                        ]
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Channel.PossessMediaSuccess $ Channel.SendableMedia Channel.MediaDocument "doc10_67_acdf")
+        it "re-posesses voice messages" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"))
+                            [ ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "docs.getMessagesUploadServer"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "peer_id" .= Number 100
+                                    , "type" .= String "audio_message"
+                                    ])
+                                (object
+                                    [ "response" .= object
+                                        [ "upload_url" .= String "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
+                                        ]
+                                    ])
+                            , ExpectedDownload
+                                "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"
+                                "<contents of 50.ogg>"
+                            , ExpectedUpload
+                                "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
+                                [WebDriver.PartBSL "file" "<contents of 50.ogg>"]
+                                (object
+                                    [ "file" .= String "newvoice|9abc"
+                                    ])
+                            , ExpectedRequest
+                                (WebDriver.HttpsAddress "api.vk.com" ["method", "docs.save"])
+                                (object
+                                    [ "v" .= Vk.apiVersion
+                                    , "access_token" .= token
+                                    , "file" .= String "newvoice|9abc"
+                                    ])
+                                (object
+                                    [ "response" .= object
+                                        [ "type" .= String "audio_message"
+                                        , "audio_message" .= object
+                                            [ "owner_id" .= Number 11
+                                            , "id" .= Number 68
+                                            , "access_key" .= String "bcde"
+                                            ]
+                                        ]
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Channel.PossessMediaSuccess $ Channel.SendableMedia Channel.MediaVoice "doc11_68_bcde")
+        it "doesn't re-posess unknown media types" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaUnknown "unknown" "https://example.test/a.txt"))
+                            []
+                            (flip shouldBe $
+                                Channel.PossessMediaUnknownType "unknown")
         -- it "sends text messages" $ do
             -- Logger.withNullLogger $ \logger -> do
                 -- withTestDriver $ \phandler driver -> do

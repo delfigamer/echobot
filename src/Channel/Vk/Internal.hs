@@ -13,8 +13,10 @@ module Channel.Vk.Internal
 
 
 import Control.Applicative
+import Control.Exception
 import Control.Monad
 import Data.Aeson
+import Data.Aeson.Types (Pair, Parser)
 import Data.Aeson.Text
 import Data.Either
 import Data.IORef
@@ -134,6 +136,10 @@ vkcPoll vkc = do
                 return $ pollserver
     requestPoll :: VkPollServer -> IO (Maybe [Value])
     requestPoll (VkPollServer pollAddress pollKey pollTs) = do
+        Logger.debug (vkcLogger vkc) $
+            "VkChannel: Current update offset: " <> Text.pack (show pollTs)
+        Logger.info (vkcLogger vkc) $
+            "VkChannel: Poll..."
         resp <- WebDriver.request (vkcDriver vkc)
             pollAddress
             (object
@@ -144,8 +150,14 @@ vkcPoll vkc = do
                 ])
         case resp of
             VkPollFail -> do
+                Logger.err (vkcLogger vkc) $
+                    "VkChannel: Request failed"
                 return $ Nothing
             VkPollUpdates newTs updates -> do
+                Logger.info (vkcLogger vkc) $
+                    "VkChannel: Response received"
+                Logger.debug (vkcLogger vkc) $
+                    "VkChannel: New update offset: " <> Text.pack (show newTs)
                 writeIORef (vkcPollServer vkc) $! Just $! VkPollServer pollAddress pollKey newTs
                 return $ Just $ updates
     failLongPoll :: IO a
@@ -186,10 +198,23 @@ vkcSendMedia vkc chatId caption group = do
 
 vkcPossessMedia
     :: VkChannel
+    -> Channel.ChatId
     -> Channel.ForeignMedia
-    -> IO (Either Text.Text Channel.SendableMedia)
-vkcPossessMedia vkc media = do
-    undefined
+    -> IO Channel.PossessMediaOutcome
+vkcPossessMedia vkc chatId (Channel.ForeignMedia mediaType mediaId mediaUrl) = do
+    case mediaType of
+        Channel.MediaUnknown -> return $ Channel.PossessMediaUnknownType $! mediaId
+        _
+            | not (Text.null mediaId || Text.isPrefixOf "!" mediaId) -> return $ Channel.PossessMediaSuccess $! Channel.SendableMedia mediaType mediaId
+            | Text.null mediaUrl -> return $ Channel.PossessMediaUnsupported
+            | otherwise -> do
+                r <- try $ vkcReuploadMedia vkc chatId mediaType mediaUrl
+                case r of
+                    Left e -> do
+                        Logger.err (vkcLogger vkc) $
+                            "VkChannel: Failed to possess media: " <> Text.pack (show (e :: SomeException))
+                        return $ Channel.PossessMediaInternalError
+                    Right result -> return $ Channel.PossessMediaSuccess $! result
 
 
 vkcUpdateMessage
@@ -210,6 +235,103 @@ vkcAnswerQuery
     -> IO (Either Text.Text ())
 vkcAnswerQuery vkc queryId text = do
     undefined
+
+
+vkcReuploadMedia
+    :: VkChannel
+    -> Channel.ChatId
+    -> Channel.MediaType
+    -> Text.Text
+    -> IO Channel.SendableMedia
+vkcReuploadMedia vkc chatId Channel.MediaPhoto mediaUrl = do
+    vkcReuploadMediaGeneral vkc chatId mediaUrl
+        "photos.getMessagesUploadServer"
+        []
+        "photos.saveMessagesPhoto"
+        (\(VkPhotoUploadResult server photo hash) -> ["server" .= server, "photo" .= photo, "hash" .= hash])
+        $ \resultList -> do
+            [VkSendablePhoto result] <- resultList
+            Just result
+vkcReuploadMedia vkc chatId Channel.MediaDocument mediaUrl = do
+    vkcReuploadMediaGeneral vkc chatId mediaUrl
+        "docs.getMessagesUploadServer"
+        ["type" .= String "doc"]
+        "docs.save"
+        (\(VkDocumentUploadResult file) -> ["file" .= file])
+        $ \(VkSendableDocument result) -> do
+            Just result
+vkcReuploadMedia vkc chatId Channel.MediaVoice mediaUrl = do
+    vkcReuploadMediaGeneral vkc chatId mediaUrl
+        "docs.getMessagesUploadServer"
+        ["type" .= String "audio_message"]
+        "docs.save"
+        (\(VkDocumentUploadResult file) -> ["file" .= file])
+        $ \(VkSendableVoice result) -> do
+            Just result
+vkcReuploadMedia vkc _ _ _ = fail "unknown media type"
+
+
+vkcReuploadMediaGeneral
+    :: (FromJSON uploadResult, FromJSON saveResult)
+    => VkChannel
+    -> Channel.ChatId
+    -> Text.Text
+    -> Text.Text
+    -> [Pair]
+    -> Text.Text
+    -> (uploadResult -> [Pair])
+    -> (saveResult -> Maybe Channel.SendableMedia)
+    -> IO Channel.SendableMedia
+vkcReuploadMediaGeneral vkc chatId mediaUrl uploadMethodName uploadParams saveMethod saveParamsFunc decodeMediaFunc = do
+    Logger.info (vkcLogger vkc) $
+        "VkChannel: Request an upload server"
+    resp <- WebDriver.request (vkcDriver vkc)
+        (WebDriver.HttpsAddress "api.vk.com" ["method", uploadMethodName])
+        (object $
+            [ "v" .= apiVersion
+            , "access_token" .= cToken (vkcConfig vkc)
+            , "peer_id" .= chatId
+            ] <> uploadParams)
+    uploadAddress <- case resp of
+        VkError err -> do
+            Logger.err (vkcLogger vkc) $
+                "VkChannel: Failed to get an upload server: " <> err
+            fail "failed to get an upload server"
+        VkResponse (VkUploadAddress address) -> do
+            Logger.info (vkcLogger vkc) $
+                "VkChannel: Got an upload server"
+            return $ address
+    Logger.info (vkcLogger vkc) $
+        "VkChannel: Download the media"
+    mediaContent <- WebDriver.download (vkcDriver vkc) mediaUrl
+    Logger.info (vkcLogger vkc) $
+        "VkChannel: Upload the media"
+    uploadResult <- WebDriver.upload (vkcDriver vkc)
+        uploadAddress
+        [WebDriver.PartBSL "file" mediaContent]
+    Logger.info (vkcLogger vkc) $
+        "VkChannel: Save the media"
+    resp <- WebDriver.request (vkcDriver vkc)
+        (WebDriver.HttpsAddress "api.vk.com" ["method", saveMethod])
+        (object $
+            [ "v" .= apiVersion
+            , "access_token" .= cToken (vkcConfig vkc)
+            ] <> saveParamsFunc uploadResult)
+    case resp of
+        VkError err -> do
+            Logger.err (vkcLogger vkc) $
+                "VkChannel: Failed to save uploaded media: " <> err
+            fail "failed to save uploaded media"
+        VkResponse saveResponse -> do
+            case decodeMediaFunc saveResponse of
+                Nothing -> do
+                    Logger.err (vkcLogger vkc) $
+                        "VkChannel: Failed to save uploaded media: unexpected response structure"
+                    fail "unexpected response structure"
+                Just result -> do
+                    Logger.info (vkcLogger vkc) $
+                        "VkChannel: Media saved"
+                    return $ result
 
 
 data VkResponse a
@@ -346,15 +468,6 @@ instance FromJSON VkForeignMedia where
         parseVoice = withObject "VkForeignMediaVoice" $ \v -> do
             url <- v .: "link_ogg"
             return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaVoice "" url
-        getMediaId typename v = do
-            ownerId <- v .: "owner_id"
-            let ownerIdStr = show (ownerId :: Integer)
-            localId <- v .: "id"
-            let localIdStr = show (localId :: Integer)
-            maccessKey <- v .:? "access_key"
-            case maccessKey of
-                Nothing -> return $ Text.pack $ typename <> ownerIdStr <> "_" <> localIdStr
-                Just accessKey -> return $ Text.pack $ typename <> ownerIdStr <> "_" <> localIdStr <> "_" <> accessKey
 
 
 data VkPhotoSize
@@ -367,3 +480,81 @@ instance FromJSON VkPhotoSize where
             <$> v .: "width"
             <*> v .: "height"
             <*> v .: "url"
+
+
+newtype VkUploadAddress
+    = VkUploadAddress Text.Text
+
+
+instance FromJSON VkUploadAddress where
+    parseJSON = withObject "VkUploadAddress" $ \v -> do
+        VkUploadAddress <$> v .: "upload_url"
+
+
+data VkPhotoUploadResult
+    = VkPhotoUploadResult !Integer !Text.Text !Text.Text
+
+
+instance FromJSON VkPhotoUploadResult where
+    parseJSON = withObject "VkPhotoUploadResult" $ \v -> do
+        VkPhotoUploadResult
+            <$> v .: "server"
+            <*> v .: "photo"
+            <*> v .: "hash"
+
+
+newtype VkSendablePhoto
+    = VkSendablePhoto Channel.SendableMedia
+
+
+instance FromJSON VkSendablePhoto where
+    parseJSON = withObject "VkSendablePhoto" $ \v -> do
+        mediaId <- getMediaId "photo" v
+        return $ VkSendablePhoto $! Channel.SendableMedia Channel.MediaPhoto mediaId
+
+
+newtype VkDocumentUploadResult
+    = VkDocumentUploadResult Text.Text
+
+
+instance FromJSON VkDocumentUploadResult where
+    parseJSON = withObject "VkDocumentUploadResult" $ \v -> do
+        VkDocumentUploadResult <$> v .: "file"
+
+
+newtype VkSendableDocument
+    = VkSendableDocument Channel.SendableMedia
+
+
+instance FromJSON VkSendableDocument where
+    parseJSON = withObject "VkSendableDocument" $ \v -> do
+        v .: "doc" >>= parseDocument
+        where
+        parseDocument = withObject "VkMediaDocument" $ \v -> do
+            mediaId <- getMediaId "doc" v
+            return $ VkSendableDocument $! Channel.SendableMedia Channel.MediaDocument mediaId
+
+
+newtype VkSendableVoice
+    = VkSendableVoice Channel.SendableMedia
+
+
+instance FromJSON VkSendableVoice where
+    parseJSON = withObject "VkSendableVoice" $ \v -> do
+        v .: "audio_message" >>= parseVoice
+        where
+        parseVoice = withObject "VkMediaVoice" $ \v -> do
+            mediaId <- getMediaId "doc" v
+            return $ VkSendableVoice $! Channel.SendableMedia Channel.MediaVoice mediaId
+
+
+getMediaId :: String -> Object -> Parser Text.Text
+getMediaId typename v = do
+    ownerId <- v .: "owner_id"
+    let ownerIdStr = show (ownerId :: Integer)
+    localId <- v .: "id"
+    let localIdStr = show (localId :: Integer)
+    maccessKey <- v .:? "access_key"
+    case maccessKey of
+        Nothing -> return $ Text.pack $ typename <> ownerIdStr <> "_" <> localIdStr
+        Just accessKey -> return $ Text.pack $ typename <> ownerIdStr <> "_" <> localIdStr <> "_" <> accessKey
