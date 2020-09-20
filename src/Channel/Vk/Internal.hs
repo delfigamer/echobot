@@ -16,7 +16,7 @@ import Control.Applicative
 import Control.Exception
 import Control.Monad
 import Data.Aeson
-import Data.Aeson.Types (Pair, Parser)
+import Data.Aeson.Types (Parser)
 import Data.Aeson.Text
 import Data.Either
 import Data.IORef
@@ -27,6 +27,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.Lazy as TextLazy
 import qualified Data.Text.Lazy.Builder as Builder
 import qualified Data.Vector as Vector
+import qualified System.Random as Random
 import qualified Channel
 import qualified Logger
 import qualified WebDriver
@@ -35,15 +36,15 @@ import qualified WebDriver
 data Config
     = Config
         { cToken :: Text.Text
-        , cGroupId :: Text.Text
-        , cTimeout :: Int
+        , cGroupId :: Integer
+        , cTimeout :: Integer
         , cKeyboardWidth :: Int }
     deriving (Show)
 
 
-withVkChannel :: Config -> Logger.Handle -> WebDriver.Handle -> (Channel.Handle -> IO r) -> IO r
-withVkChannel conf logger driver body = do
-    vkc <- vkcNew conf logger driver
+withVkChannel :: Config -> Int -> Logger.Handle -> WebDriver.Handle -> (Channel.Handle -> IO r) -> IO r
+withVkChannel conf seed logger driver body = do
+    vkc <- vkcNew conf seed logger driver
     body $ Channel.Handle
         { Channel.poll = vkcPoll vkc
         , Channel.sendMessage = vkcSendMessage vkc
@@ -58,7 +59,8 @@ data VkChannel
         { vkcConfig :: Config
         , vkcLogger :: Logger.Handle
         , vkcDriver :: WebDriver.Handle
-        , vkcPollServer :: IORef (Maybe VkPollServer) }
+        , vkcPollServer :: IORef (Maybe VkPollServer)
+        , vkcRandomState :: IORef Random.StdGen }
 
 
 data VkPollServer
@@ -69,14 +71,16 @@ apiVersion :: Text.Text
 apiVersion = "5.122"
 
 
-vkcNew :: Config -> Logger.Handle -> WebDriver.Handle -> IO VkChannel
-vkcNew conf logger driver = do
+vkcNew :: Config -> Int -> Logger.Handle -> WebDriver.Handle -> IO VkChannel
+vkcNew conf seed logger driver = do
     ppollserver <- newIORef $! Nothing
+    prandomstate <- newIORef $! Random.mkStdGen seed
     return $ VkChannel
         { vkcConfig = conf
         , vkcLogger = logger
         , vkcDriver = driver
-        , vkcPollServer = ppollserver }
+        , vkcPollServer = ppollserver
+        , vkcRandomState = prandomstate }
 
 
 vkcPoll :: VkChannel -> IO [Channel.Event]
@@ -118,12 +122,11 @@ vkcPoll vkc = do
         Logger.info (vkcLogger vkc) $
             "VkChannel: Request a long poll server"
         resp <- WebDriver.request (vkcDriver vkc)
-            (WebDriver.HttpsAddress "api.vk.com" ["method", "groups.getLongPollServer"])
-            (object
-                [ "v" .= apiVersion
-                , "access_token" .= cToken (vkcConfig vkc)
-                , "group_id" .= cGroupId (vkcConfig vkc)
-                ])
+            "https://api.vk.com/method/groups.getLongPollServer"
+            [ WebDriver.ParamText "v" $ apiVersion
+            , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+            , WebDriver.ParamNum "group_id" $ cGroupId $ vkcConfig vkc
+            ]
         case resp of
             VkError err -> do
                 Logger.err (vkcLogger vkc) $
@@ -142,12 +145,11 @@ vkcPoll vkc = do
             "VkChannel: Poll..."
         resp <- WebDriver.request (vkcDriver vkc)
             pollAddress
-            (object
-                [ "key" .= pollKey
-                , "ts" .= pollTs
-                , "act" .= String "a_check"
-                , "wait" .= cTimeout (vkcConfig vkc)
-                ])
+            [ WebDriver.ParamText "key" $ pollKey
+            , WebDriver.ParamText "ts" $ pollTs
+            , WebDriver.ParamText "act" $ "a_check"
+            , WebDriver.ParamNum "wait" $ cTimeout $ vkcConfig vkc
+            ]
         case resp of
             VkPollFail -> do
                 Logger.err (vkcLogger vkc) $
@@ -172,18 +174,35 @@ vkcSendMessage
     -> Channel.ChatId
     -> Channel.RichText
     -> [Channel.QueryButton]
-    -> IO (Either Text.Text ())
+    -> IO (Either Text.Text Channel.MessageId)
 vkcSendMessage vkc chatId content buttons = do
-    undefined
-
-
-vkcSendSticker
-    :: VkChannel
-    -> Channel.ChatId
-    -> Channel.FileId
-    -> IO (Either Text.Text ())
-vkcSendSticker vkc chatId sticker = do
-    undefined
+    Logger.info (vkcLogger vkc) $
+        "VkChannel: Send message"
+    Logger.debug (vkcLogger vkc) $
+        "VkChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show content)
+    Logger.debug (vkcLogger vkc) $
+        "VkChannel: \t" <> Text.pack (show buttons)
+    randomState1 <- readIORef (vkcRandomState vkc)
+    let (randomId, randomState2) = Random.random randomState1
+    writeIORef (vkcRandomState vkc) $! randomState2
+    resp <- WebDriver.request (vkcDriver vkc)
+        "https://api.vk.com/method/messages.send"
+        (   [ WebDriver.ParamText "v" $ apiVersion
+            , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+            , WebDriver.ParamNum "peer_id" $ chatId
+            , WebDriver.ParamNum "random_id" $ toInteger (randomId :: Word)
+            , WebDriver.ParamTextLazy "message" $ Builder.toLazyText $ encodeRichTextToBuilder content
+            ]
+        <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons)
+    case resp of
+        VkError e -> do
+            Logger.err (vkcLogger vkc) $
+                "VkChannel: Message sending failed: " <> e
+            return $ Left e
+        VkResponse messageId -> do
+            Logger.info (vkcLogger vkc) $
+                "VkChannel: Message sent"
+            return $ Right messageId
 
 
 vkcSendMedia
@@ -192,8 +211,66 @@ vkcSendMedia
     -> Text.Text
     -> [Channel.SendableMedia]
     -> IO (Either Text.Text ())
-vkcSendMedia vkc chatId caption group = do
-    undefined
+vkcSendMedia vkc chatId caption0 group = do
+    Logger.info (vkcLogger vkc) $
+        "VkChannel: Send media"
+    Logger.debug (vkcLogger vkc) $
+        "VkChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show caption0)
+    Logger.debug (vkcLogger vkc) $
+        "VkChannel: \t" <> Text.pack (show group)
+    let (trivialLeft, rest) = break isNontrivialMedia group
+    doTrivial (Right ()) caption0 trivialLeft rest
+    where
+    doTrivial current "" [] rest = doNext current rest
+    doTrivial current caption subgroup rest = do
+        Logger.debug (vkcLogger vkc) $
+            "VkChannel: Send trivial: " <> Text.pack (show subgroup)
+        randomState1 <- readIORef (vkcRandomState vkc)
+        let (randomId, randomState2) = Random.random randomState1
+        writeIORef (vkcRandomState vkc) $! randomState2
+        resp <- WebDriver.request (vkcDriver vkc)
+            "https://api.vk.com/method/messages.send"
+            [ WebDriver.ParamText "v" $ apiVersion
+            , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+            , WebDriver.ParamNum "peer_id" $ chatId
+            , WebDriver.ParamNum "random_id" $ toInteger (randomId :: Word)
+            , WebDriver.ParamText "message" $ caption
+            , WebDriver.ParamText "attachment" $ Text.intercalate "," $ map (\(Channel.SendableMedia _ mediaId) -> mediaId) $ subgroup
+            ]
+        case resp of
+            VkError e -> do
+                Logger.err (vkcLogger vkc) $
+                    "VkChannel: Media sending failed: " <> e
+                doNext (current >> Left e) rest
+            VkResponse (VkVoid _) -> do
+                doNext current rest
+    doNext current [] = return current
+    doNext current (Channel.SendableMedia Channel.MediaSticker stickerId:rest) = do
+        Logger.debug (vkcLogger vkc) $
+            "VkChannel: Send sticker: " <> Text.pack (show stickerId)
+        randomState1 <- readIORef (vkcRandomState vkc)
+        let (randomId, randomState2) = Random.random randomState1
+        writeIORef (vkcRandomState vkc) $! randomState2
+        resp <- WebDriver.request (vkcDriver vkc)
+            "https://api.vk.com/method/messages.send"
+            [ WebDriver.ParamText "v" $ apiVersion
+            , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+            , WebDriver.ParamNum "peer_id" $ chatId
+            , WebDriver.ParamNum "random_id" $ toInteger (randomId :: Word)
+            , WebDriver.ParamText "sticker_id" $ stickerId
+            ]
+        case resp of
+            VkError e -> do
+                Logger.err (vkcLogger vkc) $
+                    "VkChannel: Sticker sending failed: " <> e
+                doNext (current >> Left e) rest
+            VkResponse (VkVoid _) -> do
+                doNext current rest
+    doNext current subgroup = do
+        let (trivialLeft, rest) = break isNontrivialMedia subgroup
+        doTrivial current "" trivialLeft rest
+    isNontrivialMedia (Channel.SendableMedia Channel.MediaSticker _) = True
+    isNontrivialMedia _ = False
 
 
 vkcPossessMedia
@@ -225,7 +302,45 @@ vkcUpdateMessage
     -> [Channel.QueryButton]
     -> IO (Either Text.Text ())
 vkcUpdateMessage vkc chatId messageId content buttons = do
-    undefined
+    Logger.info (vkcLogger vkc) $
+        "VkChannel: Update message"
+    Logger.debug (vkcLogger vkc) $
+        "VkChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show messageId) <> " <- " <> Text.pack (show content)
+    Logger.debug (vkcLogger vkc) $
+        "VkChannel: \t" <> Text.pack (show buttons)
+    resp <- if messageId <= 0
+        then do
+            randomState1 <- readIORef (vkcRandomState vkc)
+            let (randomId, randomState2) = Random.random randomState1
+            writeIORef (vkcRandomState vkc) $! randomState2
+            WebDriver.request (vkcDriver vkc)
+                "https://api.vk.com/method/messages.send"
+                (   [ WebDriver.ParamText "v" $ apiVersion
+                    , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+                    , WebDriver.ParamNum "peer_id" $ chatId
+                    , WebDriver.ParamNum "random_id" $ toInteger (randomId :: Word)
+                    , WebDriver.ParamTextLazy "message" $ Builder.toLazyText $ encodeRichTextToBuilder content
+                    ]
+                <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons)
+        else do
+            WebDriver.request (vkcDriver vkc)
+                "https://api.vk.com/method/messages.edit"
+                (   [ WebDriver.ParamText "v" $ apiVersion
+                    , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+                    , WebDriver.ParamNum "peer_id" $ chatId
+                    , WebDriver.ParamNum "message_id" $ messageId
+                    , WebDriver.ParamTextLazy "message" $ Builder.toLazyText $ encodeRichTextToBuilder content
+                    ]
+                <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons)
+    case resp of
+        VkError e -> do
+            Logger.err (vkcLogger vkc) $
+                "VkChannel: Message updating failed: " <> e
+            return $ Left e
+        VkResponse (VkVoid _) -> do
+            Logger.info (vkcLogger vkc) $
+                "VkChannel: Message updated"
+            return $ Right ()
 
 
 vkcAnswerQuery
@@ -234,7 +349,7 @@ vkcAnswerQuery
     -> Text.Text
     -> IO (Either Text.Text ())
 vkcAnswerQuery vkc queryId text = do
-    undefined
+    return $ Right ()
 
 
 vkcReuploadMedia
@@ -245,29 +360,31 @@ vkcReuploadMedia
     -> IO Channel.SendableMedia
 vkcReuploadMedia vkc chatId Channel.MediaPhoto mediaUrl = do
     vkcReuploadMediaGeneral vkc chatId mediaUrl
-        "photos.getMessagesUploadServer"
+        "https://api.vk.com/method/photos.getMessagesUploadServer"
         []
-        "photos.saveMessagesPhoto"
-        (\(VkPhotoUploadResult server photo hash) -> ["server" .= server, "photo" .= photo, "hash" .= hash])
-        $ \resultList -> do
+        "https://api.vk.com/method/photos.saveMessagesPhoto"
+        (\(VkPhotoUploadResult server photo hash) ->
+            [ WebDriver.ParamNum "server" $ server
+            , WebDriver.ParamText "photo" $ photo
+            , WebDriver.ParamText "hash" $ hash
+            ])
+        (\resultList -> do
             [VkSendablePhoto result] <- resultList
-            Just result
+            Just result)
 vkcReuploadMedia vkc chatId Channel.MediaDocument mediaUrl = do
     vkcReuploadMediaGeneral vkc chatId mediaUrl
-        "docs.getMessagesUploadServer"
-        ["type" .= String "doc"]
-        "docs.save"
-        (\(VkDocumentUploadResult file) -> ["file" .= file])
-        $ \(VkSendableDocument result) -> do
-            Just result
+        "https://api.vk.com/method/docs.getMessagesUploadServer"
+        [WebDriver.ParamText "type" $ "doc"]
+        "https://api.vk.com/method/docs.save"
+        (\(VkDocumentUploadResult file) -> [WebDriver.ParamText "file" $ file])
+        (\(VkSendableDocument result) -> Just result)
 vkcReuploadMedia vkc chatId Channel.MediaVoice mediaUrl = do
     vkcReuploadMediaGeneral vkc chatId mediaUrl
-        "docs.getMessagesUploadServer"
-        ["type" .= String "audio_message"]
-        "docs.save"
-        (\(VkDocumentUploadResult file) -> ["file" .= file])
-        $ \(VkSendableVoice result) -> do
-            Just result
+        "https://api.vk.com/method/docs.getMessagesUploadServer"
+        [WebDriver.ParamText "type" $ "audio_message"]
+        "https://api.vk.com/method/docs.save"
+        (\(VkDocumentUploadResult file) -> [WebDriver.ParamText "file" $ file])
+        (\(VkSendableVoice result) -> Just result)
 vkcReuploadMedia vkc _ _ _ = fail "unknown media type"
 
 
@@ -276,47 +393,50 @@ vkcReuploadMediaGeneral
     => VkChannel
     -> Channel.ChatId
     -> Text.Text
-    -> Text.Text
-    -> [Pair]
-    -> Text.Text
-    -> (uploadResult -> [Pair])
+    -> WebDriver.Address
+    -> [WebDriver.Param]
+    -> WebDriver.Address
+    -> (uploadResult -> [WebDriver.Param])
     -> (saveResult -> Maybe Channel.SendableMedia)
     -> IO Channel.SendableMedia
-vkcReuploadMediaGeneral vkc chatId mediaUrl uploadMethodName uploadParams saveMethod saveParamsFunc decodeMediaFunc = do
+vkcReuploadMediaGeneral vkc chatId mediaUrl uploadMethodUrl uploadParams saveMethodUrl saveParamsFunc decodeMediaFunc = do
     Logger.info (vkcLogger vkc) $
+        "VkChannel: Possess media " <> mediaUrl
+    Logger.debug (vkcLogger vkc) $
         "VkChannel: Request an upload server"
     resp <- WebDriver.request (vkcDriver vkc)
-        (WebDriver.HttpsAddress "api.vk.com" ["method", uploadMethodName])
-        (object $
-            [ "v" .= apiVersion
-            , "access_token" .= cToken (vkcConfig vkc)
-            , "peer_id" .= chatId
-            ] <> uploadParams)
+        uploadMethodUrl
+        (   [ WebDriver.ParamText "v" $ apiVersion
+            , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+            , WebDriver.ParamNum "peer_id" $ chatId
+            ]
+        <> uploadParams)
     uploadAddress <- case resp of
         VkError err -> do
             Logger.err (vkcLogger vkc) $
                 "VkChannel: Failed to get an upload server: " <> err
             fail "failed to get an upload server"
         VkResponse (VkUploadAddress address) -> do
-            Logger.info (vkcLogger vkc) $
+            Logger.debug (vkcLogger vkc) $
                 "VkChannel: Got an upload server"
             return $ address
-    Logger.info (vkcLogger vkc) $
+    Logger.debug (vkcLogger vkc) $
         "VkChannel: Download the media"
     mediaContent <- WebDriver.download (vkcDriver vkc) mediaUrl
-    Logger.info (vkcLogger vkc) $
+    Logger.debug (vkcLogger vkc) $
         "VkChannel: Upload the media"
-    uploadResult <- WebDriver.upload (vkcDriver vkc)
+    uploadResult <- WebDriver.request (vkcDriver vkc)
         uploadAddress
-        [WebDriver.PartBSL "file" mediaContent]
-    Logger.info (vkcLogger vkc) $
+        [ WebDriver.ParamBytes "file" mediaContent
+        ]
+    Logger.debug (vkcLogger vkc) $
         "VkChannel: Save the media"
     resp <- WebDriver.request (vkcDriver vkc)
-        (WebDriver.HttpsAddress "api.vk.com" ["method", saveMethod])
-        (object $
-            [ "v" .= apiVersion
-            , "access_token" .= cToken (vkcConfig vkc)
-            ] <> saveParamsFunc uploadResult)
+        saveMethodUrl
+        (   [ WebDriver.ParamText "v" $ apiVersion
+            , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+            ]
+        <> saveParamsFunc uploadResult)
     case resp of
         VkError err -> do
             Logger.err (vkcLogger vkc) $
@@ -330,8 +450,44 @@ vkcReuploadMediaGeneral vkc chatId mediaUrl uploadMethodName uploadParams saveMe
                     fail "unexpected response structure"
                 Just result -> do
                     Logger.info (vkcLogger vkc) $
-                        "VkChannel: Media saved"
+                        "VkChannel: Media saved as " <> Text.pack (show result)
                     return $ result
+
+
+encodeRichTextToBuilder :: Channel.RichText -> Builder.Builder
+encodeRichTextToBuilder (Channel.RichTextSpan _ text next) = do
+    Builder.fromText text <> encodeRichTextToBuilder next
+encodeRichTextToBuilder (Channel.RichTextLink href title next) = do
+    encodeRichTextToBuilder title <> " (" <> Builder.fromText href <> ")" <> encodeRichTextToBuilder next
+encodeRichTextToBuilder (Channel.RichTextMention user title next) = do
+    encodeRichTextToBuilder title <> " (https://vk.com/id" <> Builder.fromText user <> ")" <> encodeRichTextToBuilder next
+encodeRichTextToBuilder (Channel.RichTextMono text next) = do
+    Builder.fromText text <> encodeRichTextToBuilder next
+encodeRichTextToBuilder (Channel.RichTextCode _ text next) = do
+    Builder.fromText text <> encodeRichTextToBuilder next
+encodeRichTextToBuilder Channel.RichTextEnd = mempty
+
+
+keyboardMarkupOpt :: Int -> [Channel.QueryButton] -> [WebDriver.Param]
+keyboardMarkupOpt _ [] = []
+keyboardMarkupOpt kbwidth buttons = do
+    let buttonvalues = map
+            (\(Channel.QueryButton title userdata) -> do
+                object
+                    [ "type" .= String "text"
+                    , "label" .= title
+                    , "payload" .= show userdata ])
+            buttons
+    return $ WebDriver.ParamJson "keyboard" $
+        object
+            [ "buttons" .= sectionList kbwidth buttonvalues
+            , "one_time" .= True
+            ]
+    where
+    sectionList len xs = do
+        case splitAt len xs of
+            (_, []) -> [xs]
+            (h, r) -> h:sectionList len r
 
 
 data VkResponse a
@@ -349,16 +505,10 @@ instance FromJSON a => FromJSON (VkResponse a) where
 
 instance FromJSON VkPollServer where
     parseJSON = withObject "VkPollServer" $ \v -> do
-        url <- v .: "server"
-        address <- parseUrl url
+        address <- v .: "server"
         key <- v .: "key"
         ts <- v .: "ts"
         return $ VkPollServer address key ts
-        where
-        parseUrl url = do
-            Just urlbody <- return $ Text.stripPrefix "https://" url
-            server:parts <- return $ Text.splitOn "/" urlbody
-            return $ WebDriver.HttpsAddress server parts
 
 
 data VkPollResponse
@@ -390,15 +540,18 @@ instance FromJSON VkUpdate where
             text <- v .:? "text" .!= ""
             chatId <- v .: "peer_id"
             messageId <- v .: "conversation_message_id"
-            attachments <- v .:? "attachments" .!= []
-            case attachments of
-                [] -> do
-                    return $ VkUpdateEvent $! Channel.EventMessage
+            msum
+                [ do
+                    payload <- v .: "payload"
+                    Just payloadInner <- return $ Text.stripSuffix "\"" =<< Text.stripPrefix "\"" payload
+                    return $ VkUpdateEvent $! Channel.EventQuery
                         { Channel.eChatId = chatId
-                        , Channel.eMessageId = messageId
-                        , Channel.eMessage = Channel.plainText text
+                        , Channel.eMessageId = 0
+                        , Channel.eQueryId = ""
+                        , Channel.eUserdata = Text.replace "\\\\" "\\" $ Text.replace "\\\"" "\"" $ payloadInner
                         }
-                _ -> do
+                , do
+                    attachments <- v .: "attachments"
                     return $ VkUpdateEvent $! Channel.EventMedia
                         { Channel.eChatId = chatId
                         , Channel.eCaption = text
@@ -406,6 +559,13 @@ instance FromJSON VkUpdate where
                             then map getPossessableForeignMedia attachments
                             else map getResendableForeignMedia attachments
                         }
+                , do
+                    return $ VkUpdateEvent $! Channel.EventMessage
+                        { Channel.eChatId = chatId
+                        , Channel.eMessageId = messageId
+                        , Channel.eMessage = Channel.plainText text
+                        }
+                ]
         getResendableForeignMedia (VkForeignMedia media) = media
         getPossessableForeignMedia (VkForeignMedia media@(Channel.ForeignMedia mediaType mediaId mediaUrl)) = do
             if Text.count "_" mediaId == 2
@@ -558,3 +718,10 @@ getMediaId typename v = do
     case maccessKey of
         Nothing -> return $ Text.pack $ typename <> ownerIdStr <> "_" <> localIdStr
         Just accessKey -> return $ Text.pack $ typename <> ownerIdStr <> "_" <> localIdStr <> "_" <> accessKey
+
+
+newtype VkVoid = VkVoid ()
+
+
+instance FromJSON VkVoid where
+    parseJSON _ = return $ VkVoid ()

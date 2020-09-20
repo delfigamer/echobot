@@ -107,7 +107,7 @@ data PossessMediaOutcome
 data Handle
     = Handle
         { poll :: IO [Event]
-        , sendMessage :: ChatId -> RichText -> [QueryButton] -> IO (Either Text ())
+        , sendMessage :: ChatId -> RichText -> [QueryButton] -> IO (Either Text MessageId)
         , sendMedia :: ChatId -> Text -> [SendableMedia] -> IO (Either Text ())
         , possessMedia :: ChatId -> ForeignMedia -> IO PossessMediaOutcome
         , updateMessage :: ChatId -> MessageId -> RichText -> [QueryButton] -> IO (Either Text ())

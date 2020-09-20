@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 09779460780e67492c9b62a9b9f0a5a786bd8ccde67cb91ef55fb813cc9ffa4d
+-- hash: dc645c192bd1cfe495b93de8054995d0522fee2929c1a2c1d5746f2fb551e7f8
 
 name:           EchoBot
 version:        0.1.0.0
@@ -50,6 +50,7 @@ library
     , http-client >=0.6.4 && <1
     , megaparsec >=8.0 && <9
     , modern-uri >=0.3.2 && <1
+    , random >=1.1 && <2
     , req >=3.2 && <4
     , text >=1.2 && <2
     , time >=1.9 && <2
@@ -78,6 +79,7 @@ executable EchoBot-exe
     , http-client >=0.6.4 && <1
     , megaparsec >=8.0 && <9
     , modern-uri >=0.3.2 && <1
+    , random >=1.1 && <2
     , req >=3.2 && <4
     , text >=1.2 && <2
     , time >=1.9 && <2
@@ -110,6 +112,7 @@ test-suite EchoBot-test
     , http-client >=0.6.4 && <1
     , megaparsec >=8.0 && <9
     , modern-uri >=0.3.2 && <1
+    , random >=1.1 && <2
     , req >=3.2 && <4
     , text >=1.2 && <2
     , time >=1.9 && <2

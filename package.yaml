@@ -30,6 +30,7 @@ dependencies:
 - http-client >= 0.6.4 && < 1
 - megaparsec >= 8.0 && < 9
 - modern-uri >= 0.3.2 && < 1
+- random >= 1.1 && < 2
 - req >= 3.2 && < 4
 - text >= 1.2 && < 2
 - time >= 1.9 && < 2

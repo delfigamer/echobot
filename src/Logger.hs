@@ -30,7 +30,7 @@ import qualified System.IO as IO
 
 data Handle
     = Handle
-        { send :: !(LogLevel -> Text -> IO ()) }
+        { send :: LogLevel -> Text -> IO () }
 
 
 data LogLevel

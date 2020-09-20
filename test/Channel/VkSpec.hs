@@ -14,16 +14,20 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Aeson
+import Data.Aeson.Text
 import Data.Either
 import Data.IORef
+import Data.List
 import Data.Maybe
-import Data.Text (Text)
 import Network.HTTP.Req
 import Test.Hspec
 import Test.Hspec.Expectations
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.Text.Encoding as TextEncoding
+import qualified Data.ByteString.Lazy.Char8 as BSL
+import qualified Data.Text as Text
+import qualified Data.Text.Lazy as TextLazy
+import qualified Data.Text.Lazy.Encoding as EncodingLazy
 import qualified System.IO as IO
+import qualified System.Random as Random
 import qualified Channel
 import qualified Channel.Vk.Internal as Vk
 import qualified Logger
@@ -31,9 +35,8 @@ import qualified WebDriver
 
 
 data ExpectedRequest
-    = ExpectedRequest !WebDriver.Address !Value !Value
-    | ExpectedDownload !Text !BSL.ByteString
-    | ExpectedUpload !Text [WebDriver.Part] !Value
+    = ExpectedRequest !WebDriver.Address [WebDriver.Param] !Value
+    | ExpectedDownload !Text.Text !BSL.ByteString
     deriving (Show)
 
 
@@ -45,16 +48,15 @@ withTestDriver body = do
     body pbuf $ WebDriver.Handle
             { WebDriver.request = testDriverRequest pbuf
             , WebDriver.download = testDriverDownload pbuf
-            , WebDriver.upload = testDriverUpload pbuf
             }
 
 
 testDriverRequest
-    :: (ToJSON a, FromJSON b)
-    => IORef [ExpectedRequest] -> WebDriver.Address -> a -> IO b
+    :: (FromJSON b)
+    => IORef [ExpectedRequest] -> WebDriver.Address -> [WebDriver.Param] -> IO b
 testDriverRequest pbuf address params = do
-    ExpectedRequest address2 jparams2 result:rest <- readIORef pbuf
-    (address, toJSON params) `shouldBe` (address2, jparams2)
+    ExpectedRequest address2 params2 result:rest <- readIORef pbuf
+    (address, normalizeParamSet params) `shouldBe` (address2, normalizeParamSet params2)
     writeIORef pbuf $! rest
     case fromJSON result of
         Error err -> fail err
@@ -62,24 +64,20 @@ testDriverRequest pbuf address params = do
 
 
 testDriverDownload
-    :: IORef [ExpectedRequest] -> Text -> IO BSL.ByteString
+    :: IORef [ExpectedRequest] -> Text.Text -> IO BSL.ByteString
 testDriverDownload pbuf address = do
     ExpectedDownload address2 result:rest <- readIORef pbuf
-    (address) `shouldBe` (address2)
+    address `shouldBe` address2
     writeIORef pbuf $! rest
     return $ result
 
 
-testDriverUpload
-    :: (FromJSON b)
-    => IORef [ExpectedRequest] -> Text -> [WebDriver.Part] -> IO b
-testDriverUpload pbuf address parts = do
-    ExpectedUpload address2 parts2 result:rest <- readIORef pbuf
-    (address, parts) `shouldBe` (address2, parts2)
-    writeIORef pbuf $! rest
-    case fromJSON result of
-        Error err -> fail err
-        Success x -> return $ x
+normalizeParamSet :: [WebDriver.Param] -> [WebDriver.Param]
+normalizeParamSet params = sortOn WebDriver.paramName $ map normalize $ params
+    where
+    normalize (WebDriver.ParamTextLazy name text) = WebDriver.ParamText name $ TextLazy.toStrict text
+    normalize (WebDriver.ParamNum name num) = WebDriver.ParamText name $ Text.pack $ show num
+    normalize param = param
 
 
 perform
@@ -101,7 +99,7 @@ spec :: Spec
 spec = do
     describe "Channel.Vk" $ do
         let token = "bottok"
-        let groupId = "groupId"
+        let groupId = 110
         let timeout = 56
         let conf = Vk.Config
                 { Vk.cToken = token
@@ -109,19 +107,20 @@ spec = do
                 , Vk.cTimeout = timeout
                 , Vk.cKeyboardWidth = 3 }
         let groupChatId x = 2000000000 + x
+        let randomSeed = 1
+        let randoms = map toInteger $ (Random.randoms $ Random.mkStdGen randomSeed :: [Word])
         it "performs a long poll" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \prequestbuf driver -> do
-                    Vk.withVkChannel conf logger driver $ \channel -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "groups.getLongPollServer"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "group_id" .= groupId
-                                    ])
+                                "https://api.vk.com/method/groups.getLongPollServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "group_id" $ groupId
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "key" .= String "lpkey"
@@ -130,71 +129,69 @@ spec = do
                                         ]
                                     ])
                             , ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "1"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
-                                (object
-                                    [ "ts" .= String "1"
-                                    , "updates" .= Array mempty
-                                    ])
-                            ]
-                            (`shouldBe` [])
-                        perform prequestbuf
-                            (Channel.poll channel)
-                            [ ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "1"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "1"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "1"
                                     , "updates" .= Array mempty
                                     ])
                             ]
-                            (`shouldBe` [])
+                            (flip shouldBe $
+                                [])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "1"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "1"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
+                                    [ "ts" .= String "1"
+                                    , "updates" .= Array mempty
                                     ])
+                            ]
+                            (flip shouldBe $
+                                [])
+                        perform prequestbuf
+                            (Channel.poll channel)
+                            [ ExpectedRequest
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "1"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "20"
                                     , "failed" .= Number 1
                                     ])
                             ]
-                            (`shouldBe` [])
+                            (flip shouldBe $
+                                [])
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "20"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "20"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "failed" .= Number 2
                                     ])
                             , ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "groups.getLongPollServer"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "group_id" .= groupId
-                                    ])
+                                "https://api.vk.com/method/groups.getLongPollServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "group_id" $ groupId
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "key" .= String "lpkey2"
@@ -203,32 +200,31 @@ spec = do
                                         ]
                                     ])
                             , ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey2"
-                                    , "ts" .= String "30"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey2"
+                                , WebDriver.ParamText "ts" $ "30"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "30"
                                     , "updates" .= Array mempty
                                     ])
                             ]
-                            (`shouldBe` [])
+                            (flip shouldBe $
+                                [])
         it "receives plain text messages" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \prequestbuf driver -> do
-                    Vk.withVkChannel conf logger driver $ \channel -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "groups.getLongPollServer"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "group_id" .= groupId
-                                    ])
+                                "https://api.vk.com/method/groups.getLongPollServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "group_id" $ groupId
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "key" .= String "lpkey"
@@ -237,13 +233,12 @@ spec = do
                                         ]
                                     ])
                             , ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "10"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "10"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "20"
                                     , "updates" .=
@@ -270,23 +265,22 @@ spec = do
                                         ]
                                     ])
                             ]
-                            (`shouldBe`
+                            (flip shouldBe $
                                 [ Channel.EventMessage 100 10 $ Channel.plainText "100 message text"
                                 , Channel.EventMessage 200 11 $ Channel.plainText "200 message text"
                                 ])
         it "receives media messages" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \prequestbuf driver -> do
-                    Vk.withVkChannel conf logger driver $ \channel -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "groups.getLongPollServer"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "group_id" .= groupId
-                                    ])
+                                "https://api.vk.com/method/groups.getLongPollServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "group_id" $ groupId
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "key" .= String "lpkey"
@@ -295,13 +289,12 @@ spec = do
                                         ]
                                     ])
                             , ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "10"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "10"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "20"
                                     , "updates" .=
@@ -405,7 +398,7 @@ spec = do
                                         ]
                                     ])
                             ]
-                            (`shouldBe`
+                            (flip shouldBe $
                                 [ Channel.EventMedia 100 "100 message text"
                                     [ Channel.ForeignMedia Channel.MediaPhoto "photo50_60" "https://srv.userapi.com/group/file2.jpg"
                                     , Channel.ForeignMedia Channel.MediaPhoto "photo70_80_beef" "https://srv.userapi.com/group/file4.jpg"
@@ -422,13 +415,12 @@ spec = do
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "20"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "20"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "30"
                                     , "updates" .=
@@ -488,7 +480,7 @@ spec = do
                                         ]
                                     ])
                             ]
-                            (`shouldBe`
+                            (flip shouldBe $
                                 [ Channel.EventMedia 100 "100 message text"
                                     [ Channel.ForeignMedia Channel.MediaVideo "video50_60" ""
                                     , Channel.ForeignMedia Channel.MediaVideo "video70_80_beef" ""
@@ -501,13 +493,12 @@ spec = do
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "30"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "30"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "40"
                                     , "updates" .=
@@ -558,7 +549,7 @@ spec = do
                                         ]
                                     ])
                             ]
-                            (`shouldBe`
+                            (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
                                     [ Channel.ForeignMedia Channel.MediaAudio "audio50_60" "https://psv1.vkuseraudio.net/c1/u2/audios/abcd.mp3?extra=_1_2_3&long_chunk=1"
                                     , Channel.ForeignMedia Channel.MediaAudio "audio70_80" ""
@@ -570,13 +561,12 @@ spec = do
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "40"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "40"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "50"
                                     , "updates" .=
@@ -639,7 +629,7 @@ spec = do
                                         ]
                                     ])
                             ]
-                            (`shouldBe`
+                            (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
                                     [ Channel.ForeignMedia Channel.MediaDocument "doc50_60" "https://vk.com/doc50_60?hash=1&dl=2&api=1&no_preview=1"
                                     , Channel.ForeignMedia Channel.MediaDocument "doc70_80_abab" "https://vk.com/doc70_80?hash=1&dl=2&api=1&no_preview=1"
@@ -652,13 +642,12 @@ spec = do
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "50"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "50"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "60"
                                     , "updates" .=
@@ -682,7 +671,7 @@ spec = do
                                         ]
                                     ])
                             ]
-                            (`shouldBe`
+                            (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
                                     [ Channel.ForeignMedia Channel.MediaSticker "450" ""
                                     ]
@@ -690,13 +679,12 @@ spec = do
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "60"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "60"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "70"
                                     , "updates" .=
@@ -743,7 +731,7 @@ spec = do
                                         ]
                                     ])
                             ]
-                            (`shouldBe`
+                            (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
                                     [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"
                                     ]
@@ -754,13 +742,12 @@ spec = do
                         perform prequestbuf
                             (Channel.poll channel)
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "lp.vk.com" ["lpadr", "lpadr2"])
-                                (object
-                                    [ "key" .= String "lpkey"
-                                    , "ts" .= String "70"
-                                    , "act" .= String  "a_check"
-                                    , "wait" .= timeout
-                                    ])
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "70"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
                                 (object
                                     [ "ts" .= String "80"
                                     , "updates" .=
@@ -781,16 +768,16 @@ spec = do
                                         ]
                                     ])
                             ]
-                            (`shouldBe`
+                            (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
                                     [ Channel.ForeignMedia Channel.MediaUnknown "unknown_type" ""
                                     ]
                                 ])
-                        {- attachents with an access_key that come from group chats are busted, see Channel.Vk.Internal for a more detailed explanation -}
+                        -- {- attachents with an access_key that come from group chats are busted, see Channel.Vk.Internal for a more detailed explanation -}
         it "re-posesses photos" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \prequestbuf driver -> do
-                    Vk.withVkChannel conf logger driver $ \channel -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
                         perform prequestbuf
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "photo17_30_cdcd" "https://srv.userapi.com/group/file6.jpg"))
                             []
@@ -799,12 +786,11 @@ spec = do
                         perform prequestbuf
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.getMessagesUploadServer"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "peer_id" .= Number 100
-                                    ])
+                                "https://api.vk.com/method/photos.getMessagesUploadServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "upload_url" .= String "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
@@ -813,23 +799,23 @@ spec = do
                             , ExpectedDownload
                                 "https://srv.userapi.com/group/file7.jpg"
                                 "<contents of file7.jpg>"
-                            , ExpectedUpload
+                            , ExpectedRequest
                                 "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
-                                [WebDriver.PartBSL "file" "<contents of file7.jpg>"]
+                                [ WebDriver.ParamBytes "file" $ "<contents of file7.jpg>"
+                                ]
                                 (object
                                     [ "server" .= Number 1234
                                     , "photo" .= String "{\"key\":\"value\"}"
                                     , "hash" .= String "56ff"
                                     ])
                             , ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.saveMessagesPhoto"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "server" .= Number 1234
-                                    , "photo" .= String "{\"key\":\"value\"}"
-                                    , "hash" .= String "56ff"
-                                    ])
+                                "https://api.vk.com/method/photos.saveMessagesPhoto"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "server" $ 1234
+                                , WebDriver.ParamText "photo" $ "{\"key\":\"value\"}"
+                                , WebDriver.ParamText "hash" $ "56ff"
+                                ]
                                 (object
                                     [ "response" .=
                                         [ object
@@ -845,12 +831,11 @@ spec = do
                         perform prequestbuf
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.getMessagesUploadServer"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "peer_id" .= Number 100
-                                    ])
+                                "https://api.vk.com/method/photos.getMessagesUploadServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "upload_url" .= String "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
@@ -859,23 +844,23 @@ spec = do
                             , ExpectedDownload
                                 "https://srv.userapi.com/group/file7.jpg"
                                 "<contents of file7.jpg>"
-                            , ExpectedUpload
+                            , ExpectedRequest
                                 "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
-                                [WebDriver.PartBSL "file" "<contents of file7.jpg>"]
+                                [ WebDriver.ParamBytes "file" $ "<contents of file7.jpg>"
+                                ]
                                 (object
                                     [ "server" .= Number 1234
                                     , "photo" .= String "{\"key\":\"value\"}"
                                     , "hash" .= String "56ff"
                                     ])
                             , ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.saveMessagesPhoto"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "server" .= Number 1234
-                                    , "photo" .= String "{\"key\":\"value\"}"
-                                    , "hash" .= String "56ff"
-                                    ])
+                                "https://api.vk.com/method/photos.saveMessagesPhoto"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "server" $ 1234
+                                , WebDriver.ParamText "photo" $ "{\"key\":\"value\"}"
+                                , WebDriver.ParamText "hash" $ "56ff"
+                                ]
                                 (object
                                     [ "response" .= Array mempty
                                     ])
@@ -885,12 +870,11 @@ spec = do
                         perform prequestbuf
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.getMessagesUploadServer"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "peer_id" .= Number 100
-                                    ])
+                                "https://api.vk.com/method/photos.getMessagesUploadServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "upload_url" .= String "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
@@ -899,23 +883,22 @@ spec = do
                             , ExpectedDownload
                                 "https://srv.userapi.com/group/file7.jpg"
                                 "<contents of file7.jpg>"
-                            , ExpectedUpload
+                            , ExpectedRequest
                                 "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
-                                [WebDriver.PartBSL "file" "<contents of file7.jpg>"]
+                                [WebDriver.ParamBytes "file" "<contents of file7.jpg>"]
                                 (object
                                     [ "server" .= Number 1234
                                     , "photo" .= String "{\"key\":\"value\"}"
                                     , "hash" .= String "56ff"
                                     ])
                             , ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.saveMessagesPhoto"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "server" .= Number 1234
-                                    , "photo" .= String "{\"key\":\"value\"}"
-                                    , "hash" .= String "56ff"
-                                    ])
+                                "https://api.vk.com/method/photos.saveMessagesPhoto"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "server" $ 1234
+                                , WebDriver.ParamText "photo" $ "{\"key\":\"value\"}"
+                                , WebDriver.ParamText "hash" $ "56ff"
+                                ]
                                 (object
                                     [ "error" .= object ["error_msg" .= String "failed"]
                                     ])
@@ -925,12 +908,11 @@ spec = do
                         perform prequestbuf
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "photos.getMessagesUploadServer"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "peer_id" .= Number 100
-                                    ])
+                                "https://api.vk.com/method/photos.getMessagesUploadServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                ]
                                 (object
                                     [ "error" .= object ["error_msg" .= String "failed"]
                                     ])
@@ -945,17 +927,16 @@ spec = do
         it "re-posesses documents" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \prequestbuf driver -> do
-                    Vk.withVkChannel conf logger driver $ \channel -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
                         perform prequestbuf
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaDocument "!doc18_40_efef" "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"))
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "docs.getMessagesUploadServer"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "peer_id" .= Number 100
-                                    , "type" .= String "doc"
-                                    ])
+                                "https://api.vk.com/method/docs.getMessagesUploadServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamText "type" $ "doc"
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "upload_url" .= String "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
@@ -964,19 +945,19 @@ spec = do
                             , ExpectedDownload
                                 "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"
                                 "<contents of doc18_40>"
-                            , ExpectedUpload
+                            , ExpectedRequest
                                 "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
-                                [WebDriver.PartBSL "file" "<contents of doc18_40>"]
+                                [ WebDriver.ParamBytes "file" $ "<contents of doc18_40>"
+                                ]
                                 (object
                                     [ "file" .= String "newdoc|5678cdef"
                                     ])
                             , ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "docs.save"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "file" .= String "newdoc|5678cdef"
-                                    ])
+                                "https://api.vk.com/method/docs.save"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamText "file" $ "newdoc|5678cdef"
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "type" .= String "doc"
@@ -993,17 +974,16 @@ spec = do
         it "re-posesses voice messages" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \prequestbuf driver -> do
-                    Vk.withVkChannel conf logger driver $ \channel -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
                         perform prequestbuf
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"))
                             [ ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "docs.getMessagesUploadServer"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "peer_id" .= Number 100
-                                    , "type" .= String "audio_message"
-                                    ])
+                                "https://api.vk.com/method/docs.getMessagesUploadServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamText "type" $ "audio_message"
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "upload_url" .= String "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
@@ -1012,19 +992,19 @@ spec = do
                             , ExpectedDownload
                                 "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"
                                 "<contents of 50.ogg>"
-                            , ExpectedUpload
+                            , ExpectedRequest
                                 "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
-                                [WebDriver.PartBSL "file" "<contents of 50.ogg>"]
+                                [ WebDriver.ParamBytes "file" $ "<contents of 50.ogg>"
+                                ]
                                 (object
                                     [ "file" .= String "newvoice|9abc"
                                     ])
                             , ExpectedRequest
-                                (WebDriver.HttpsAddress "api.vk.com" ["method", "docs.save"])
-                                (object
-                                    [ "v" .= Vk.apiVersion
-                                    , "access_token" .= token
-                                    , "file" .= String "newvoice|9abc"
-                                    ])
+                                "https://api.vk.com/method/docs.save"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamText "file" $ "newvoice|9abc"
+                                ]
                                 (object
                                     [ "response" .= object
                                         [ "type" .= String "audio_message"
@@ -1041,892 +1021,502 @@ spec = do
         it "doesn't re-posess unknown media types" $ do
             Logger.withNullLogger $ \logger -> do
                 withTestDriver $ \prequestbuf driver -> do
-                    Vk.withVkChannel conf logger driver $ \channel -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
                         perform prequestbuf
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaUnknown "unknown" "https://example.test/a.txt"))
                             []
                             (flip shouldBe $
                                 Channel.PossessMediaUnknownType "unknown")
-        -- it "sends text messages" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "text" .= ("message" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= object ["message_id" .= (600 :: Int)]
-                                -- ])
-                            -- (Channel.sendMessage channel 100 (Channel.plainText "message") [])
-                            -- (Right 600)
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
-                            -- (object
-                                -- [ "chat_id" .= (102 :: Int)
-                                -- , "text" .= ("message 2" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= False
-                                -- , "description" .= ("err" :: Text)
-                                -- ])
-                            -- (Channel.sendMessage channel 102 (Channel.plainText "message 2") [])
-                            -- (Left "err")
-        -- it "sends sticker messages" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendSticker"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "sticker" .= ("sticker" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.sendSticker channel 100 "sticker")
-                            -- (Right ())
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendSticker"])
-                            -- (object
-                                -- [ "chat_id" .= (102 :: Int)
-                                -- , "sticker" .= ("sticker 2" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= False
-                                -- , "description" .= ("err" :: Text)
-                                -- ])
-                            -- (Channel.sendSticker channel 102 "sticker 2")
-                            -- (Left "err")
-        -- it "updates existing messages" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "editMessageText"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "message_id" .= (600 :: Int)
-                                -- , "text" .= ("updated message" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.updateMessage channel 100 600 (Channel.plainText "updated message") [])
-                            -- (Right ())
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "editMessageText"])
-                            -- (object
-                                -- [ "chat_id" .= (102 :: Int)
-                                -- , "message_id" .= (700 :: Int)
-                                -- , "text" .= ("updated message 2" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= False
-                                -- , "description" .= ("err" :: Text)
-                                -- ])
-                            -- (Channel.updateMessage channel 102 700 (Channel.plainText "updated message 2") [])
-                            -- (Left "err")
-        -- it "sends messages with buttons" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequestWithReplyMarkup phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "text" .= ("message" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "inline_keyboard" .=
-                                    -- [ [ object ["text" .= ("t1" :: Text), "callback_data" .= ("u1" :: Text)]
-                                      -- , object ["text" .= ("t2" :: Text), "callback_data" .= ("u2" :: Text)]
-                                      -- , object ["text" .= ("t3" :: Text), "callback_data" .= ("u3" :: Text)]
-                                      -- ]
-                                    -- , [ object ["text" .= ("t4" :: Text), "callback_data" .= ("u4" :: Text)]
-                                      -- ]
-                                    -- ]
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= object ["message_id" .= (600 :: Int)]
-                                -- ])
-                            -- (Channel.sendMessage channel 100 (Channel.plainText "message")
-                                -- [ Channel.QueryButton "t1" "u1"
-                                -- , Channel.QueryButton "t2" "u2"
-                                -- , Channel.QueryButton "t3" "u3"
-                                -- , Channel.QueryButton "t4" "u4"
-                                -- ])
-                            -- (Right 600)
-        -- it "updates messages with buttons" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequestWithReplyMarkup phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "editMessageText"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "message_id" .= (600 :: Int)
-                                -- , "text" .= ("updated message" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "inline_keyboard" .=
-                                    -- [ [ object ["text" .= ("t1" :: Text), "callback_data" .= ("u1" :: Text)]
-                                      -- , object ["text" .= ("t2" :: Text), "callback_data" .= ("u2" :: Text)]
-                                      -- , object ["text" .= ("t3" :: Text), "callback_data" .= ("u3" :: Text)]
-                                      -- ]
-                                    -- , [ object ["text" .= ("t4" :: Text), "callback_data" .= ("u4" :: Text)]
-                                      -- , object ["text" .= ("t5" :: Text), "callback_data" .= ("u5" :: Text)]
-                                      -- ]
-                                    -- ]
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.updateMessage channel 100 600 (Channel.plainText "updated message")
-                                -- [ Channel.QueryButton "t1" "u1"
-                                -- , Channel.QueryButton "t2" "u2"
-                                -- , Channel.QueryButton "t3" "u3"
-                                -- , Channel.QueryButton "t4" "u4"
-                                -- , Channel.QueryButton "t5" "u5"
-                                -- ])
-                            -- (Right ())
-        -- it "receives button events" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
-                            -- (object ["timeout" .= timeout])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .=
-                                    -- [ object
-                                        -- [ "update_id" .= (1 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "message_id" .= (500 :: Int)
-                                            -- , "text" .= ("Sample Text" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (2 :: Int)
-                                        -- , "callback_query" .= object
-                                            -- [ "message" .= object
-                                                -- [ "chat" .= object ["id" .= (101 :: Int)]
-                                                -- , "message_id" .= (501 :: Int)
-                                                -- ]
-                                            -- , "id" .= ("qid1" :: Text)
-                                            -- , "data" .= ("qdata1" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (3 :: Int)
-                                        -- , "callback_query" .= object
-                                            -- [ "message" .= object
-                                                -- [ "chat" .= object ["id" .= (102 :: Int)]
-                                                -- , "message_id" .= (502 :: Int)
-                                                -- ]
-                                            -- , "id" .= ("qid2" :: Text)
-                                            -- , "data" .= ("qdata2" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- ]
-                                -- ])
-                            -- (Channel.poll channel)
-                            -- [ Channel.EventMessage 100 500 (Channel.plainText "Sample Text")
-                            -- , Channel.EventQuery 101 501 "qid1" "qdata1"
-                            -- , Channel.EventQuery 102 502 "qid2" "qdata2"
-                            -- ]
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
-                            -- (object ["offset" .= (4 :: Int), "timeout" .= timeout])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .=
-                                    -- [ object
-                                        -- [ "update_id" .= (4 :: Int)
-                                        -- , "callback_query" .= object
-                                            -- [ "message" .= object
-                                                -- [ "chat" .= object ["id" .= (110 :: Int)]
-                                                -- , "message_id" .= (510 :: Int)
-                                                -- ]
-                                            -- , "id" .= ("qid5" :: Text)
-                                            -- , "data" .= ("qdata5" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- ]
-                                -- ])
-                            -- (Channel.poll channel)
-                            -- [ Channel.EventQuery 110 510 "qid5" "qdata5"
-                            -- ]
-        -- it "sends answers to button queries" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "answerCallbackQuery"])
-                            -- (object
-                                -- [ "callback_query_id" .= ("qid1" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.answerQuery channel "qid1" "")
-                            -- (Right ())
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "answerCallbackQuery"])
-                            -- (object
-                                -- [ "callback_query_id" .= ("qid2" :: Text)
-                                -- , "text" .= ("sample text" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.answerQuery channel "qid2" "sample text")
-                            -- (Right ())
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "answerCallbackQuery"])
-                            -- (object
-                                -- [ "callback_query_id" .= ("qid3" :: Text)
-                                -- , "text" .= ("sample text 3" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= False
-                                -- , "description" .= ("err" :: Text)
-                                -- ])
-                            -- (Channel.answerQuery channel "qid3" "sample text 3")
-                            -- (Left "err")
-        -- it "receives media messages" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
-                            -- (object ["timeout" .= timeout])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .=
-                                    -- [ object
-                                        -- [ "update_id" .= (1 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "photo" .=
-                                                -- [ object ["file_id" .= ("photo 1" :: Text)]
-                                                -- ]
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (2 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "photo" .=
-                                                -- [ object ["file_id" .= ("photo 2" :: Text)]
-                                                -- ]
-                                            -- , "caption" .= ("caption 2" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- ]
-                                -- ])
-                            -- (Channel.poll channel)
-                            -- [ Channel.EventMedia 100 "" (Channel.MediaPhoto "photo 1")
-                            -- , Channel.EventMedia 100 "caption 2" (Channel.MediaPhoto "photo 2")
-                            -- ]
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
-                            -- (object ["offset" .= (3 :: Int), "timeout" .= timeout])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .=
-                                    -- [ object
-                                        -- [ "update_id" .= (3 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "video" .= object ["file_id" .= ("video id" :: Text)]
-                                            -- , "caption" .= ("video caption" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (4 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "audio" .= object ["file_id" .= ("audio id" :: Text)]
-                                            -- , "caption" .= ("audio caption" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (5 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "animation" .= object ["file_id" .= ("animation id" :: Text)]
-                                            -- , "document" .= object ["file_id" .= ("other id" :: Text)]
-                                            -- , "caption" .= ("animation caption" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (6 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "voice" .= object ["file_id" .= ("voice id" :: Text)]
-                                            -- , "caption" .= ("voice caption" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (7 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "document" .= object ["file_id" .= ("document id" :: Text)]
-                                            -- , "caption" .= ("document caption" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- ]
-                                -- ])
-                            -- (Channel.poll channel)
-                            -- [ Channel.EventMedia 100 "video caption" $ Channel.MediaVideo "video id"
-                            -- , Channel.EventMedia 100 "audio caption" $ Channel.MediaAudio "audio id"
-                            -- , Channel.EventMedia 100 "animation caption" $ Channel.MediaAnimation "animation id"
-                            -- , Channel.EventMedia 100 "voice caption" $ Channel.MediaVoice "voice id"
-                            -- , Channel.EventMedia 100 "document caption" $ Channel.MediaDocument "document id"
-                            -- ]
-        -- it "receives media group messages" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
-                            -- (object ["timeout" .= timeout])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .=
-                                    -- [ object
-                                        -- [ "update_id" .= (1 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "photo" .=
-                                                -- [ object ["file_id" .= ("photo 1" :: Text)]
-                                                -- ]
-                                            -- , "caption" .= ("caption 1" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (2 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "photo" .=
-                                                -- [ object ["file_id" .= ("photo 2" :: Text)]
-                                                -- ]
-                                            -- , "caption" .= ("caption 2" :: Text)
-                                            -- , "media_group_id" .= ("group id" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (3 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "photo" .=
-                                                -- [ object ["file_id" .= ("photo 3" :: Text)]
-                                                -- ]
-                                            -- , "media_group_id" .= ("group id" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (4 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "video" .= object ["file_id" .= ("video 4" :: Text)]
-                                            -- , "caption" .= ("caption 4" :: Text)
-                                            -- , "media_group_id" .= ("group id" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (5 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "video" .= object ["file_id" .= ("video 5" :: Text)]
-                                            -- , "caption" .= ("caption 5" :: Text)
-                                            -- , "media_group_id" .= ("group id 2" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (6 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "video" .= object ["file_id" .= ("video 6" :: Text)]
-                                            -- , "caption" .= ("caption 6" :: Text)
-                                            -- , "media_group_id" .= ("group id 2" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (7 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (200 :: Int)]
-                                            -- , "video" .= object ["file_id" .= ("video 7" :: Text)]
-                                            -- , "caption" .= ("caption 7" :: Text)
-                                            -- , "media_group_id" .= ("group id 2" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (8 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (200 :: Int)]
-                                            -- , "video" .= object ["file_id" .= ("video 8" :: Text)]
-                                            -- , "caption" .= ("caption 8" :: Text)
-                                            -- , "media_group_id" .= ("group id 2" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- , object
-                                        -- [ "update_id" .= (5 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "photo" .=
-                                                -- [ object ["file_id" .= ("photo 9" :: Text)]
-                                                -- ]
-                                            -- , "caption" .= ("caption 9" :: Text)
-                                            -- ]
-                                        -- ]
-                                    -- ]
-                                -- ])
-                            -- (Channel.poll channel)
-                            -- [ Channel.EventMedia 100 "caption 1" $ Channel.MediaPhoto "photo 1"
-                            -- , Channel.EventMediaGroup 100 "group id"
-                                -- $ Channel.MediaGroupPhoto "caption 2" "photo 2"
-                                -- $ Channel.MediaGroupPhoto "" "photo 3"
-                                -- $ Channel.MediaGroupVideo "caption 4" "video 4"
-                                -- $ Channel.MediaGroupEnd
-                            -- , Channel.EventMediaGroup 100 "group id 2"
-                                -- $ Channel.MediaGroupVideo "caption 5" "video 5"
-                                -- $ Channel.MediaGroupVideo "caption 6" "video 6"
-                                -- $ Channel.MediaGroupEnd
-                            -- , Channel.EventMediaGroup 200 "group id 2"
-                                -- $ Channel.MediaGroupVideo "caption 7" "video 7"
-                                -- $ Channel.MediaGroupVideo "caption 8" "video 8"
-                                -- $ Channel.MediaGroupEnd
-                            -- , Channel.EventMedia 100 "caption 9" $ Channel.MediaPhoto "photo 9"
-                            -- ]
-        -- it "sends media" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendPhoto"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "photo" .= ("photo 1" :: Text)
-                                -- , "caption" .= ("caption 1" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.sendMedia channel 100 "caption 1" (Channel.MediaPhoto "photo 1"))
-                            -- (Right ())
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendVideo"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "video" .= ("video 2" :: Text)
-                                -- , "caption" .= ("caption 2" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.sendMedia channel 100 "caption 2" (Channel.MediaVideo "video 2"))
-                            -- (Right ())
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendAudio"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "audio" .= ("audio 3" :: Text)
-                                -- , "caption" .= ("caption 3" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.sendMedia channel 100 "caption 3" (Channel.MediaAudio "audio 3"))
-                            -- (Right ())
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendAnimation"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "animation" .= ("animation 4" :: Text)
-                                -- , "caption" .= ("caption 4" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.sendMedia channel 100 "caption 4" (Channel.MediaAnimation "animation 4"))
-                            -- (Right ())
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendVoice"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "voice" .= ("voice 5" :: Text)
-                                -- , "caption" .= ("caption 5" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.sendMedia channel 100 "caption 5" (Channel.MediaVoice "voice 5"))
-                            -- (Right ())
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendDocument"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "document" .= ("document 6" :: Text)
-                                -- , "caption" .= ("caption 6" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.sendMedia channel 100 "caption 6" (Channel.MediaDocument "document 6"))
-                            -- (Right ())
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendPhoto"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "photo" .= ("photo 7" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.sendMedia channel 100 "" (Channel.MediaPhoto "photo 7"))
-                            -- (Right ())
-        -- it "sends media groups" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMediaGroup"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "media" .=
-                                    -- [ object
-                                        -- [ "type" .= ("photo" :: Text)
-                                        -- , "media" .= ("photo 1" :: Text)
-                                        -- ]
-                                    -- , object
-                                        -- [ "type" .= ("photo" :: Text)
-                                        -- , "media" .= ("photo 2" :: Text)
-                                        -- , "caption" .= ("caption 2" :: Text)
-                                        -- ]
-                                    -- , object
-                                        -- [ "type" .= ("video" :: Text)
-                                        -- , "media" .= ("video 3" :: Text)
-                                        -- , "caption" .= ("caption 3" :: Text)
-                                        -- ]
-                                    -- ]
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= True
-                                -- ])
-                            -- (Channel.sendMediaGroup channel 100
-                                -- $ Channel.MediaGroupPhoto "" "photo 1"
-                                -- $ Channel.MediaGroupPhoto "caption 2" "photo 2"
-                                -- $ Channel.MediaGroupVideo "caption 3" "video 3"
-                                -- $ Channel.MediaGroupEnd)
-                            -- (Right ())
-        -- it "receives rich text messages" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
-                            -- (object ["timeout" .= timeout])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .=
-                                    -- [ object
-                                        -- [ "update_id" .= (1 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "message_id" .= (500 :: Int)
-                                            -- {-                                                            ^23456789_12^23456789_      -}
-                                            -- {-                  ^2345^234567^23456789_1      ^23456^23456789_123456789^23456789_12345 -}
-                                            -- , "text" .= ("plain bold italic bolditalic plain under strike understrike boldunder under" :: Text)
-                                            -- {-            _123456789_123456789_123456789_123456789_123456789_123456789_123456789_1234 -}
-                                            -- , "entities" .=
-                                                -- [ object ["type" .= ("bold" :: Text), "offset" .= (6 :: Int), "length" .= (5 :: Int)]
-                                                -- , object ["type" .= ("italic" :: Text), "offset" .= (11 :: Int), "length" .= (7 :: Int)]
-                                                -- , object ["type" .= ("bold" :: Text), "offset" .= (18 :: Int), "length" .= (11 :: Int)]
-                                                -- , object ["type" .= ("italic" :: Text), "offset" .= (18 :: Int), "length" .= (11 :: Int)]
-                                                -- , object ["type" .= ("underline" :: Text), "offset" .= (35 :: Int), "length" .= (6 :: Int)]
-                                                -- , object ["type" .= ("strikethrough" :: Text), "offset" .= (41 :: Int), "length" .= (19 :: Int)]
-                                                -- , object ["type" .= ("underline" :: Text), "offset" .= (48 :: Int), "length" .= (12 :: Int)]
-                                                -- , object ["type" .= ("underline" :: Text), "offset" .= (60 :: Int), "length" .= (15 :: Int)]
-                                                -- , object ["type" .= ("bold" :: Text), "offset" .= (60 :: Int), "length" .= (10 :: Int)]
-                                                -- ]
-                                            -- ]
-                                        -- ]
-                                    -- ]
-                                -- ])
-                            -- (Channel.poll channel)
-                            -- [ Channel.EventMessage 100 500
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False True False False) "italic "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle True True False False) "bolditalic "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False True) "strike "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False True True) "understrike "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle True False True False) "boldunder "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
-                                -- $ Channel.RichTextEnd
-                            -- ]
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
-                            -- (object ["offset" .= (2 :: Int), "timeout" .= timeout])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .=
-                                    -- [ object
-                                        -- [ "update_id" .= (2 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "message_id" .= (500 :: Int)
-                                            -- {-                 ^234                    ^2345 -}
-                                            -- {-            ^23456789_1234       ^23456789_123 -}
-                                            -- , "text" .= ("link bold link plain mention under" :: Text)
-                                            -- {-            _123456789_123456789_123456789_123 -}
-                                            -- , "entities" .=
-                                                -- [ object ["type" .= ("bold" :: Text), "offset" .= (5 :: Int), "length" .= (4 :: Int)]
-                                                -- , object ["type" .= ("underline" :: Text), "offset" .= (29 :: Int), "length" .= (5 :: Int)]
-                                                -- , object ["type" .= ("text_link" :: Text), "offset" .= (0 :: Int), "length" .= (14 :: Int), "url" .= ("link url" :: Text)]
-                                                -- , object ["type" .= ("text_mention" :: Text), "offset" .= (21 :: Int), "length" .= (13 :: Int), "user" .= object ["id" .= ("user id" :: Text)]]
-                                                -- ]
-                                            -- ]
-                                        -- ]
-                                    -- ]
-                                -- ])
-                            -- (Channel.poll channel)
-                            -- [ Channel.EventMessage 100 500
-                                -- $ Channel.RichTextLink "link url"
-                                    -- ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "link "
-                                    -- $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold"
-                                    -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " link"
-                                    -- $ Channel.RichTextEnd )
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
-                                -- $ Channel.RichTextMention "user id"
-                                    -- ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "mention "
-                                    -- $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
-                                    -- $ Channel.RichTextEnd )
-                                -- $ Channel.RichTextEnd
-                            -- ]
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
-                            -- (object ["offset" .= (3 :: Int), "timeout" .= timeout])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .=
-                                    -- [ object
-                                        -- [ "update_id" .= (3 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "message_id" .= (500 :: Int)
-                                            -- {-            ^23456789_1       ^23456789_       ^23456789_12345 -}
-                                            -- , "text" .= ("inline-code plain block-code plain block-code-lang" :: Text)
-                                            -- {-            _123456789_123456789_123456789_123456789_123456789 -}
-                                            -- , "entities" .=
-                                                -- [ object ["type" .= ("code" :: Text), "offset" .= (0 :: Int), "length" .= (11 :: Int)]
-                                                -- , object ["type" .= ("ignore me" :: Text), "offset" .= (14 :: Int), "length" .= (4 :: Int)]
-                                                -- , object ["type" .= ("pre" :: Text), "offset" .= (18 :: Int), "length" .= (10 :: Int)]
-                                                -- , object ["type" .= ("pre" :: Text), "offset" .= (35 :: Int), "length" .= (15 :: Int), "language" .= ("code lang" :: Text)]
-                                                -- ]
-                                            -- ]
-                                        -- ]
-                                    -- ]
-                                -- ])
-                            -- (Channel.poll channel)
-                            -- [ Channel.EventMessage 100 500
-                                -- $ Channel.RichTextMono "inline-code"
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
-                                -- $ Channel.RichTextCode "" "block-code"
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
-                                -- $ Channel.RichTextCode "code lang" "block-code-lang"
-                                -- $ Channel.RichTextEnd
-                            -- ]
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "getUpdates"])
-                            -- (object ["offset" .= (4 :: Int), "timeout" .= timeout])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .=
-                                    -- [ object
-                                        -- [ "update_id" .= (4 :: Int)
-                                        -- , "message" .= object
-                                            -- [ "chat" .= object ["id" .= (100 :: Int)]
-                                            -- , "message_id" .= (500 :: Int)
-                                            -- {-                       ^     345                ^2 -}
-                                            -- , "text" .= ("tt \x1F914\x1F914 bb \x1F914\x1F914 uu tt" :: Text)
-                                            -- {-            _12 3      5     789_ 1      3     567 -}
-                                            -- , "entities" .=
-                                                -- [ object ["type" .= ("bold" :: Text), "offset" .= (5 :: Int), "length" .= (5 :: Int)]
-                                                -- , object ["type" .= ("underline" :: Text), "offset" .= (16 :: Int), "length" .= (2 :: Int)]
-                                                -- ]
-                                            -- ]
-                                        -- ]
-                                    -- ]
-                                -- ])
-                            -- (Channel.poll channel)
-                            -- [ Channel.EventMessage 100 500
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "tt \x1F914"
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "\x1F914 bb"
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " \x1F914\x1F914 "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "uu"
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " tt"
-                                -- $ Channel.RichTextEnd
-                            -- ]
-        -- it "sends rich text messages" $ do
-            -- Logger.withNullLogger $ \logger -> do
-                -- withTestDriver $ \phandler driver -> do
-                    -- Tg.withTgChannel conf logger driver $ \channel -> do
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "text" .= ("\
-                                    -- \plain \
-                                    -- \<b>bold </b>\
-                                    -- \<i>italic </i>\
-                                    -- \<b><i>bolditalic </i></b>\
-                                    -- \plain \
-                                    -- \<u>under </u>\
-                                    -- \<s>strike </s>\
-                                    -- \<u><s>understrike </s></u>\
-                                    -- \<b><u>boldunder </u></b>\
-                                    -- \<u>under</u>" :: Text)
-                                -- , "parse_mode" .= ("HTML" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= object ["message_id" .= (600 :: Int)]
-                                -- ])
-                            -- (Channel.sendMessage channel 100
-                                -- ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False True False False) "italic "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle True True False False) "bolditalic "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False True) "strike "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False True True) "understrike "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle True False True False) "boldunder "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
-                                -- $ Channel.RichTextEnd )
-                                -- [])
-                            -- (Right 600)
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "text" .= ("\
-                                    -- \<a href=\"link url\">link <b>bold</b> link</a>\
-                                    -- \ plain \
-                                    -- \<a href=\"tg://user?id=user id\">mention <u>under</u></a>" :: Text)
-                                -- , "parse_mode" .= ("HTML" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= object ["message_id" .= (601 :: Int)]
-                                -- ])
-                            -- (Channel.sendMessage channel 100
-                                -- ( Channel.RichTextLink "link url"
-                                    -- ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "link "
-                                    -- $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold"
-                                    -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " link"
-                                    -- $ Channel.RichTextEnd )
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
-                                -- $ Channel.RichTextMention "user id"
-                                    -- ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "mention "
-                                    -- $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
-                                    -- $ Channel.RichTextEnd )
-                                -- $ Channel.RichTextEnd )
-                                -- [])
-                            -- (Right 601)
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "text" .= ("\
-                                    -- \<code>inline-code</code>\
-                                    -- \ plain \
-                                    -- \<pre>block-code</pre>\
-                                    -- \ plain \
-                                    -- \<pre><code class=\"language-code lang\">block-code-lang</code></pre>" :: Text)
-                                -- , "parse_mode" .= ("HTML" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= object ["message_id" .= (602 :: Int)]
-                                -- ])
-                            -- (Channel.sendMessage channel 100
-                                -- ( Channel.RichTextMono "inline-code"
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
-                                -- $ Channel.RichTextCode "" "block-code"
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
-                                -- $ Channel.RichTextCode "code lang" "block-code-lang"
-                                -- $ Channel.RichTextEnd )
-                                -- [])
-                            -- (Right 602)
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "text" .= ("\
-                                    -- \tt \x1F914\
-                                    -- \<b>\x1F914 bb</b>\
-                                    -- \ \x1F914\x1F914 \
-                                    -- \<u>uu</u>\
-                                    -- \ tt" :: Text)
-                                -- , "parse_mode" .= ("HTML" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= object ["message_id" .= (603 :: Int)]
-                                -- ])
-                            -- (Channel.sendMessage channel 100
-                                -- ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "tt \x1F914"
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "\x1F914 bb"
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " \x1F914\x1F914 "
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "uu"
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " tt"
-                                -- $ Channel.RichTextEnd )
-                                -- [])
-                            -- (Right 603)
-                        -- oneRequest phandler
-                            -- (WebDriver.HttpsAddress "api.telegram.org" [token, "sendMessage"])
-                            -- (object
-                                -- [ "chat_id" .= (100 :: Int)
-                                -- , "text" .= ("\
-                                    -- \abc&lt;&gt;&amp;&quot;\
-                                    -- \<b>abc&lt;&gt;&amp;&quot;</b>\
-                                    -- \abc&lt;&gt;&amp;&quot;" :: Text)
-                                -- , "parse_mode" .= ("HTML" :: Text)
-                                -- ])
-                            -- (object
-                                -- [ "ok" .= True
-                                -- , "result" .= object ["message_id" .= (604 :: Int)]
-                                -- ])
-                            -- (Channel.sendMessage channel 100
-                                -- ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "abc<>&\""
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "abc<>&\""
-                                -- $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "abc<>&\""
-                                -- $ Channel.RichTextEnd )
-                                -- [])
-                            -- (Right 604)
+        it "sends text messages" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.sendMessage channel 100 (Channel.plainText "message text") [])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamText "message" $ "message text"
+                                , WebDriver.ParamNum "random_id" $ randoms !! 0
+                                ]
+                                (object
+                                    [ "response" .= Number 15
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right 15)
+                        perform prequestbuf
+                            (Channel.sendMessage channel 100 (Channel.plainText "message text") [])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamText "message" $ "message text"
+                                , WebDriver.ParamNum "random_id" $ randoms !! 1
+                                ]
+                                (object
+                                    [ "error" .= object
+                                        [ "error_msg" .= String "too bad"
+                                        ]
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Left "too bad")
+        it "updates existing messages" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.updateMessage channel 100 15 (Channel.plainText "message text") [])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.edit"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "message_id" $ 15
+                                , WebDriver.ParamText "message" $ "message text"
+                                ]
+                                (object
+                                    [ "response" .= True
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right ())
+                        perform prequestbuf
+                            (Channel.updateMessage channel 100 0 (Channel.plainText "message text 2") [])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 0
+                                , WebDriver.ParamText "message" $ "message text 2"
+                                ]
+                                (object
+                                    [ "response" .= Number 20
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right ())
+        it "sends messages with buttons" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.sendMessage channel 100 (Channel.plainText "message text")
+                                [ Channel.QueryButton "t1" "u1"
+                                , Channel.QueryButton "t2" "u2"
+                                , Channel.QueryButton "t3" "u3"
+                                , Channel.QueryButton "t4" "u4"
+                                ])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamText "message" $ "message text"
+                                , WebDriver.ParamNum "random_id" $ randoms !! 0
+                                , WebDriver.ParamJson "keyboard" $ object
+                                    [ "one_time" .= True
+                                    , "buttons" .=
+                                        [   [ object
+                                                [ "type" .= String "text"
+                                                , "label" .= String "t1"
+                                                , "payload" .= String "\"u1\""
+                                                ]
+                                            , object
+                                                [ "type" .= String "text"
+                                                , "label" .= String "t2"
+                                                , "payload" .= String "\"u2\""
+                                                ]
+                                            , object
+                                                [ "type" .= String "text"
+                                                , "label" .= String "t3"
+                                                , "payload" .= String "\"u3\""
+                                                ]
+                                            ]
+                                        ,   [ object
+                                                [ "type" .= String "text"
+                                                , "label" .= String "t4"
+                                                , "payload" .= String "\"u4\""
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                                (object
+                                    [ "response" .= Number 15
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right 15)
+        it "updates messages with buttons" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.updateMessage channel 100 15 (Channel.plainText "message text")
+                                [ Channel.QueryButton "t1" "u1"
+                                , Channel.QueryButton "t2" "u2"
+                                , Channel.QueryButton "t3" "u3"
+                                , Channel.QueryButton "t4" "u4"
+                                ])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.edit"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "message_id" $ 15
+                                , WebDriver.ParamText "message" $ "message text"
+                                , WebDriver.ParamJson "keyboard" $ object
+                                    [ "one_time" .= True
+                                    , "buttons" .=
+                                        [   [ object
+                                                [ "type" .= String "text"
+                                                , "label" .= String "t1"
+                                                , "payload" .= String "\"u1\""
+                                                ]
+                                            , object
+                                                [ "type" .= String "text"
+                                                , "label" .= String "t2"
+                                                , "payload" .= String "\"u2\""
+                                                ]
+                                            , object
+                                                [ "type" .= String "text"
+                                                , "label" .= String "t3"
+                                                , "payload" .= String "\"u3\""
+                                                ]
+                                            ]
+                                        ,   [ object
+                                                [ "type" .= String "text"
+                                                , "label" .= String "t4"
+                                                , "payload" .= String "\"u4\""
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                                (object
+                                    [ "response" .= True
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right ())
+                        perform prequestbuf
+                            (Channel.updateMessage channel 100 0 (Channel.plainText "message text 2") [])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 0
+                                , WebDriver.ParamText "message" $ "message text 2"
+                                ]
+                                (object
+                                    [ "response" .= Number 20
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right ())
+        it "receives button events" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.poll channel)
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/groups.getLongPollServer"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "group_id" $ groupId
+                                ]
+                                (object
+                                    [ "response" .= object
+                                        [ "key" .= String "lpkey"
+                                        , "server" .= String "https://lp.vk.com/lpadr/lpadr2"
+                                        , "ts" .= String "10"
+                                        ]
+                                    ])
+                            , ExpectedRequest
+                                "https://lp.vk.com/lpadr/lpadr2"
+                                [ WebDriver.ParamText "key" $ "lpkey"
+                                , WebDriver.ParamText "ts" $ "10"
+                                , WebDriver.ParamText "act" $ "a_check"
+                                , WebDriver.ParamNum "wait" $ timeout
+                                ]
+                                (object
+                                    [ "ts" .= String "20"
+                                    , "updates" .=
+                                        [ object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number 100
+                                                    , "conversation_message_id" .= Number 10
+                                                    , "text" .= String "qtext 1"
+                                                    ]
+                                                ]
+                                            ]
+                                        , object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number 100
+                                                    , "conversation_message_id" .= Number 11
+                                                    , "text" .= String "qtext 2"
+                                                    , "payload" .= String "\"qdata2\""
+                                                    ]
+                                                ]
+                                            ]
+                                        , object
+                                            [ "type" .= String "message_new"
+                                            , "object" .= object
+                                                [ "message" .= object
+                                                    [ "peer_id" .= Number 100
+                                                    , "conversation_message_id" .= Number 12
+                                                    , "text" .= String "qtext 3"
+                                                    , "payload" .= String "\"qdata \\\\ \\\" 3\""
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                [ Channel.EventMessage 100 10 $ Channel.plainText "qtext 1"
+                                , Channel.EventQuery 100 0 "" "qdata2"
+                                , Channel.EventQuery 100 0 "" "qdata \\ \" 3"
+                                ])
+        it "sends answers to button queries" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.answerQuery channel "quid" "msg")
+                            []
+                            (flip shouldBe $
+                                Right ())
+        it "sends media" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.sendMedia channel 100 "message text"
+                                [ Channel.SendableMedia Channel.MediaPhoto "photo12_34"
+                                , Channel.SendableMedia Channel.MediaPhoto "photo12_35_abcd"
+                                , Channel.SendableMedia Channel.MediaPhoto "photo12_36_efef"
+                                ])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 0
+                                , WebDriver.ParamText "message" $ "message text"
+                                , WebDriver.ParamText "attachment" $ "photo12_34,photo12_35_abcd,photo12_36_efef"
+                                ]
+                                (object
+                                    [ "response" .= Number 20
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right ())
+                        perform prequestbuf
+                            (Channel.sendMedia channel 100 "message text"
+                                [ Channel.SendableMedia Channel.MediaPhoto "photo12_34"
+                                , Channel.SendableMedia Channel.MediaPhoto "photo12_35_abcd"
+                                , Channel.SendableMedia Channel.MediaSticker "sticker20"
+                                , Channel.SendableMedia Channel.MediaSticker "sticker30"
+                                , Channel.SendableMedia Channel.MediaPhoto "photo12_36_efef"
+                                , Channel.SendableMedia Channel.MediaSticker "sticker40"
+                                ])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 1
+                                , WebDriver.ParamText "message" $ "message text"
+                                , WebDriver.ParamText "attachment" $ "photo12_34,photo12_35_abcd"
+                                ]
+                                (object
+                                    [ "response" .= Number 20
+                                    ])
+                            , ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 2
+                                , WebDriver.ParamText "sticker_id" $ "sticker20"
+                                ]
+                                (object
+                                    [ "response" .= Number 21
+                                    ])
+                            , ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 3
+                                , WebDriver.ParamText "sticker_id" $ "sticker30"
+                                ]
+                                (object
+                                    [ "response" .= Number 21
+                                    ])
+                            , ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 4
+                                , WebDriver.ParamText "message" $ ""
+                                , WebDriver.ParamText "attachment" $ "photo12_36_efef"
+                                ]
+                                (object
+                                    [ "response" .= Number 20
+                                    ])
+                            , ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 5
+                                , WebDriver.ParamText "sticker_id" $ "sticker40"
+                                ]
+                                (object
+                                    [ "response" .= Number 20
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right ())
+        it "sends rich text messages as plain text" $ do
+            Logger.withNullLogger $ \logger -> do
+                withTestDriver $ \prequestbuf driver -> do
+                    Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
+                        perform prequestbuf
+                            (Channel.sendMessage channel 100
+                                ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False True False False) "italic "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True True False False) "bolditalic "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False True) "strike "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True True) "understrike "
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False True False) "boldunder "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
+                                $ Channel.RichTextEnd )
+                                [])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 0
+                                , WebDriver.ParamText "message" $ "plain bold italic bolditalic plain under strike understrike boldunder under"
+                                ]
+                                (object
+                                    [ "response" .= Number 20
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right 20)
+                        perform prequestbuf
+                            (Channel.sendMessage channel 100
+                                ( Channel.RichTextLink "link url"
+                                    ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "link "
+                                    $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold"
+                                    $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " link"
+                                    $ Channel.RichTextEnd )
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextMention "345"
+                                    ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "mention "
+                                    $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
+                                    $ Channel.RichTextEnd )
+                                $ Channel.RichTextEnd )
+                                [])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 1
+                                , WebDriver.ParamText "message" $ "link bold link (link url) plain mention under (https://vk.com/id345)"
+                                ]
+                                (object
+                                    [ "response" .= Number 21
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right 21)
+                        perform prequestbuf
+                            (Channel.sendMessage channel 100
+                                ( Channel.RichTextMono "inline-code"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextCode "" "block-code"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
+                                $ Channel.RichTextCode "code lang" "block-code-lang"
+                                $ Channel.RichTextEnd )
+                                [])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 2
+                                , WebDriver.ParamText "message" $ "inline-code plain block-code plain block-code-lang"
+                                ]
+                                (object
+                                    [ "response" .= Number 22
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right 22)
+                        perform prequestbuf
+                            (Channel.sendMessage channel 100
+                                ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "tt \x1F914"
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "\x1F914 bb"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " \x1F914\x1F914 "
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "uu"
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " tt"
+                                $ Channel.RichTextEnd )
+                                [])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 3
+                                , WebDriver.ParamText "message" $ "tt \x1F914\x1F914 bb \x1F914\x1F914 uu tt"
+                                ]
+                                (object
+                                    [ "response" .= Number 23
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right 23)
+                        perform prequestbuf
+                            (Channel.sendMessage channel 100
+                                ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "abc<>&\""
+                                $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "abc<>&\""
+                                $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "abc<>&\""
+                                $ Channel.RichTextEnd )
+                                [])
+                            [ ExpectedRequest
+                                "https://api.vk.com/method/messages.send"
+                                [ WebDriver.ParamText "v" $ Vk.apiVersion
+                                , WebDriver.ParamText "access_token" $ token
+                                , WebDriver.ParamNum "peer_id" $ 100
+                                , WebDriver.ParamNum "random_id" $ randoms !! 4
+                                , WebDriver.ParamText "message" $ "abc<>&\"abc<>&\"abc<>&\""
+                                ]
+                                (object
+                                    [ "response" .= Number 24
+                                    ])
+                            ]
+                            (flip shouldBe $
+                                Right 24)
