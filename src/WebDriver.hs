@@ -27,6 +27,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Encoding
 import qualified Data.Text.Lazy as TextLazy
 import qualified Data.Text.Lazy.Encoding as EncodingLazy
+import qualified Network.HTTP.Client as Client
 import qualified Network.HTTP.Client.MultipartFormData as Multipart
 import qualified System.IO as IO
 import qualified Text.URI as URI
@@ -41,7 +42,7 @@ data Param
     | ParamTextLazy !Text.Text !TextLazy.Text
     | ParamNum !Text.Text !Integer
     | ParamJson !Text.Text !Value
-    | ParamBytes !Text.Text !BSL.ByteString
+    | ParamFile !Text.Text !Text.Text !BSL.ByteString
     deriving (Show, Eq)
 
 
@@ -49,7 +50,7 @@ paramName (ParamText name _) = name
 paramName (ParamTextLazy name _) = name
 paramName (ParamNum name _) = name
 paramName (ParamJson name _) = name
-paramName (ParamBytes name _) = name
+paramName (ParamFile name _ _) = name
 
 
 data Handle
@@ -84,15 +85,15 @@ webRequest logger address params = do
             ParamJson name value -> do
                 Logger.debug logger $
                     "WebDriver: \t" <> name <> " = " <> encodeToText value
-            ParamBytes name payload -> do
+            ParamFile name filename payload -> do
                 Logger.debug logger $
-                    "WebDriver: \t" <> name <> " = <" <> Text.pack (show $ BSL.length payload) <> " bytes>"
-    let hasParamBytes = flip any params $ \p -> do
-        case p of
-            ParamBytes _ _ -> True
-            _ -> False
+                    "WebDriver: \t" <> name <> " = " <> filename <> " (" <> Text.pack (show $ BSL.length payload) <> " bytes)"
+    let hasParamFile = flip any params $ \p -> do
+            case p of
+                ParamFile _ _ _ -> True
+                _ -> False
     (url, options) <- parseUrlVerbose logger address
-    resp <- if hasParamBytes
+    resp <- if hasParamFile
         then do
             body <- reqBodyMultipart $ map multipart params
             runReq defaultHttpConfig $
@@ -119,12 +120,12 @@ webRequest logger address params = do
     urlencoded (ParamTextLazy name text) = name =: text
     urlencoded (ParamNum name number) = name =: number
     urlencoded (ParamJson name value) = name =: encodeToLazyText value
-    urlencoded (ParamBytes name payload) = undefined
+    urlencoded (ParamFile _ _ _) = undefined
     multipart (ParamText name text) = Multipart.partBS name $ Encoding.encodeUtf8 text
     multipart (ParamTextLazy name text) = Multipart.partLBS name $ EncodingLazy.encodeUtf8 text
     multipart (ParamNum name number) = Multipart.partLBS name $ BSLC.pack $ show number
     multipart (ParamJson name value) = Multipart.partLBS name $ encode value
-    multipart (ParamBytes name payload) = Multipart.partLBS name payload
+    multipart (ParamFile name filename payload) = Multipart.partFileRequestBody name (Text.unpack filename) $ Client.RequestBodyLBS payload
     escapeText text = Text.replace "\"" "\\\"" $ Text.replace "\\" "\\\\" $ text
     escapeTextLazy text = TextLazy.replace "\"" "\\\"" $ TextLazy.replace "\\" "\\\\" $ text
 

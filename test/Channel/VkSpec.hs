@@ -631,12 +631,12 @@ spec = do
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
-                                    [ Channel.ForeignMedia Channel.MediaDocument "doc50_60" "https://vk.com/doc50_60?hash=1&dl=2&api=1&no_preview=1"
-                                    , Channel.ForeignMedia Channel.MediaDocument "doc70_80_abab" "https://vk.com/doc70_80?hash=1&dl=2&api=1&no_preview=1"
+                                    [ Channel.ForeignMedia Channel.MediaDocument "doc50_60" "\"a\"https://vk.com/doc50_60?hash=1&dl=2&api=1&no_preview=1"
+                                    , Channel.ForeignMedia Channel.MediaDocument "" "\"a\"https://vk.com/doc70_80?hash=1&dl=2&api=1&no_preview=1"
                                     ]
                                 , Channel.EventMedia (groupChatId 300) ""
-                                    [ Channel.ForeignMedia Channel.MediaDocument "doc17_30" "https://vk.com/doc17_30?hash=1&dl=2&api=1&no_preview=1"
-                                    , Channel.ForeignMedia Channel.MediaDocument "!doc18_40_efef" "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"
+                                    [ Channel.ForeignMedia Channel.MediaDocument "doc17_30" "\"a\"https://vk.com/doc17_30?hash=1&dl=2&api=1&no_preview=1"
+                                    , Channel.ForeignMedia Channel.MediaDocument "" "\"a\"https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"
                                     ]
                                 ])
                         perform prequestbuf
@@ -701,7 +701,7 @@ spec = do
                                                                 [ "owner_id" .= Number 50
                                                                 , "id" .= Number 60
                                                                 , "access_key" .= String "abab"
-                                                                , "link_ogg" .= String "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"
+                                                                , "link_mp3" .= String "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.mp3"
                                                                 ]
                                                             ]
                                                         ]
@@ -721,7 +721,7 @@ spec = do
                                                                 [ "owner_id" .= Number 18
                                                                 , "id" .= Number 40
                                                                 , "access_key" .= String "efef"
-                                                                , "link_ogg" .= String "https://psv1.userapi.com/c1//u2/audiomsg/d1/60.ogg"
+                                                                , "link_mp3" .= String "https://psv1.userapi.com/c1//u2/audiomsg/d1/60.mp3"
                                                                 ]
                                                             ]
                                                         ]
@@ -733,10 +733,10 @@ spec = do
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
-                                    [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"
+                                    [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.mp3"
                                     ]
                                 , Channel.EventMedia (groupChatId 300) ""
-                                    [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/60.ogg"
+                                    [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/60.mp3"
                                     ]
                                 ])
                         perform prequestbuf
@@ -801,7 +801,7 @@ spec = do
                                 "<contents of file7.jpg>"
                             , ExpectedRequest
                                 "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
-                                [ WebDriver.ParamBytes "file" $ "<contents of file7.jpg>"
+                                [ WebDriver.ParamFile "file" "file7.jpg" $ "<contents of file7.jpg>"
                                 ]
                                 (object
                                     [ "server" .= Number 1234
@@ -846,7 +846,7 @@ spec = do
                                 "<contents of file7.jpg>"
                             , ExpectedRequest
                                 "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
-                                [ WebDriver.ParamBytes "file" $ "<contents of file7.jpg>"
+                                [ WebDriver.ParamFile "file" "file7.jpg" $ "<contents of file7.jpg>"
                                 ]
                                 (object
                                     [ "server" .= Number 1234
@@ -885,7 +885,7 @@ spec = do
                                 "<contents of file7.jpg>"
                             , ExpectedRequest
                                 "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
-                                [WebDriver.ParamBytes "file" "<contents of file7.jpg>"]
+                                [WebDriver.ParamFile "file" "file7.jpg" "<contents of file7.jpg>"]
                                 (object
                                     [ "server" .= Number 1234
                                     , "photo" .= String "{\"key\":\"value\"}"
@@ -929,7 +929,7 @@ spec = do
                 withTestDriver $ \prequestbuf driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
                         perform prequestbuf
-                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaDocument "!doc18_40_efef" "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"))
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaDocument "" "\"mydoc.txt\"https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"))
                             [ ExpectedRequest
                                 "https://api.vk.com/method/docs.getMessagesUploadServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
@@ -947,7 +947,7 @@ spec = do
                                 "<contents of doc18_40>"
                             , ExpectedRequest
                                 "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
-                                [ WebDriver.ParamBytes "file" $ "<contents of doc18_40>"
+                                [ WebDriver.ParamFile "file" "mydoc.txt" $ "<contents of doc18_40>"
                                 ]
                                 (object
                                     [ "file" .= String "newdoc|5678cdef"
@@ -976,7 +976,7 @@ spec = do
                 withTestDriver $ \prequestbuf driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
                         perform prequestbuf
-                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"))
+                            (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.mp3"))
                             [ ExpectedRequest
                                 "https://api.vk.com/method/docs.getMessagesUploadServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
@@ -990,11 +990,11 @@ spec = do
                                         ]
                                     ])
                             , ExpectedDownload
-                                "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.ogg"
-                                "<contents of 50.ogg>"
+                                "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.mp3"
+                                "<contents of 50.mp3>"
                             , ExpectedRequest
                                 "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
-                                [ WebDriver.ParamBytes "file" $ "<contents of 50.ogg>"
+                                [ WebDriver.ParamFile "file" "50.mp3" $ "<contents of 50.mp3>"
                                 ]
                                 (object
                                     [ "file" .= String "newvoice|9abc"
@@ -1123,25 +1123,33 @@ spec = do
                                     [ "one_time" .= True
                                     , "buttons" .=
                                         [   [ object
-                                                [ "type" .= String "text"
-                                                , "label" .= String "t1"
-                                                , "payload" .= String "\"u1\""
+                                                [ "action" .= object
+                                                    ["type" .= String "text"
+                                                    , "label" .= String "t1"
+                                                    , "payload" .= String "\"u1\""
+                                                    ]
                                                 ]
                                             , object
-                                                [ "type" .= String "text"
-                                                , "label" .= String "t2"
-                                                , "payload" .= String "\"u2\""
+                                                [ "action" .= object
+                                                    [ "type" .= String "text"
+                                                    , "label" .= String "t2"
+                                                    , "payload" .= String "\"u2\""
+                                                    ]
                                                 ]
                                             , object
-                                                [ "type" .= String "text"
-                                                , "label" .= String "t3"
-                                                , "payload" .= String "\"u3\""
+                                                [ "action" .= object
+                                                    [ "type" .= String "text"
+                                                    , "label" .= String "t3"
+                                                    , "payload" .= String "\"u3\""
+                                                    ]
                                                 ]
                                             ]
                                         ,   [ object
-                                                [ "type" .= String "text"
-                                                , "label" .= String "t4"
-                                                , "payload" .= String "\"u4\""
+                                                [ "action" .= object
+                                                    [ "type" .= String "text"
+                                                    , "label" .= String "t4"
+                                                    , "payload" .= String "\"u4\""
+                                                    ]
                                                 ]
                                             ]
                                         ]
@@ -1175,25 +1183,33 @@ spec = do
                                     [ "one_time" .= True
                                     , "buttons" .=
                                         [   [ object
-                                                [ "type" .= String "text"
-                                                , "label" .= String "t1"
-                                                , "payload" .= String "\"u1\""
+                                                [ "action" .= object
+                                                    ["type" .= String "text"
+                                                    , "label" .= String "t1"
+                                                    , "payload" .= String "\"u1\""
+                                                    ]
                                                 ]
                                             , object
-                                                [ "type" .= String "text"
-                                                , "label" .= String "t2"
-                                                , "payload" .= String "\"u2\""
+                                                [ "action" .= object
+                                                    [ "type" .= String "text"
+                                                    , "label" .= String "t2"
+                                                    , "payload" .= String "\"u2\""
+                                                    ]
                                                 ]
                                             , object
-                                                [ "type" .= String "text"
-                                                , "label" .= String "t3"
-                                                , "payload" .= String "\"u3\""
+                                                [ "action" .= object
+                                                    [ "type" .= String "text"
+                                                    , "label" .= String "t3"
+                                                    , "payload" .= String "\"u3\""
+                                                    ]
                                                 ]
                                             ]
                                         ,   [ object
-                                                [ "type" .= String "text"
-                                                , "label" .= String "t4"
-                                                , "payload" .= String "\"u4\""
+                                                [ "action" .= object
+                                                    [ "type" .= String "text"
+                                                    , "label" .= String "t4"
+                                                    , "payload" .= String "\"u4\""
+                                                    ]
                                                 ]
                                             ]
                                         ]

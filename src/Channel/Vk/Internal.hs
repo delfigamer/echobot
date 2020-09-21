@@ -23,11 +23,13 @@ import Data.IORef
 import Data.List
 import Data.Maybe
 import qualified Data.HashMap.Strict as HashMap
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy as TextLazy
 import qualified Data.Text.Lazy.Builder as Builder
 import qualified Data.Vector as Vector
 import qualified System.Random as Random
+import qualified Text.URI as URI
 import qualified Channel
 import qualified Logger
 import qualified WebDriver
@@ -182,27 +184,31 @@ vkcSendMessage vkc chatId content buttons = do
         "VkChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show content)
     Logger.debug (vkcLogger vkc) $
         "VkChannel: \t" <> Text.pack (show buttons)
-    randomState1 <- readIORef (vkcRandomState vkc)
-    let (randomId, randomState2) = Random.random randomState1
-    writeIORef (vkcRandomState vkc) $! randomState2
-    resp <- WebDriver.request (vkcDriver vkc)
-        "https://api.vk.com/method/messages.send"
-        (   [ WebDriver.ParamText "v" $ apiVersion
-            , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
-            , WebDriver.ParamNum "peer_id" $ chatId
-            , WebDriver.ParamNum "random_id" $ toInteger (randomId :: Word)
-            , WebDriver.ParamTextLazy "message" $ Builder.toLazyText $ encodeRichTextToBuilder content
-            ]
-        <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons)
-    case resp of
-        VkError e -> do
-            Logger.err (vkcLogger vkc) $
-                "VkChannel: Message sending failed: " <> e
-            return $ Left e
-        VkResponse messageId -> do
-            Logger.info (vkcLogger vkc) $
-                "VkChannel: Message sent"
-            return $ Right messageId
+    let text = Builder.toLazyText $ encodeRichTextToBuilder content
+    if TextLazy.null text
+        then return $ Right 0
+        else do
+            randomState1 <- readIORef (vkcRandomState vkc)
+            let (randomId, randomState2) = Random.random randomState1
+            writeIORef (vkcRandomState vkc) $! randomState2
+            resp <- WebDriver.request (vkcDriver vkc)
+                "https://api.vk.com/method/messages.send"
+                (   [ WebDriver.ParamText "v" $ apiVersion
+                    , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+                    , WebDriver.ParamNum "peer_id" $ chatId
+                    , WebDriver.ParamNum "random_id" $ toInteger (randomId :: Word)
+                    , WebDriver.ParamTextLazy "message" $ text
+                    ]
+                <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons)
+            case resp of
+                VkError e -> do
+                    Logger.err (vkcLogger vkc) $
+                        "VkChannel: Message sending failed: " <> e
+                    return $ Left e
+                VkResponse messageId -> do
+                    Logger.info (vkcLogger vkc) $
+                        "VkChannel: Message sent"
+                    return $ Right messageId
 
 
 vkcSendMedia
@@ -359,7 +365,9 @@ vkcReuploadMedia
     -> Text.Text
     -> IO Channel.SendableMedia
 vkcReuploadMedia vkc chatId Channel.MediaPhoto mediaUrl = do
-    vkcReuploadMediaGeneral vkc chatId mediaUrl
+    vkcReuploadMediaGeneral vkc chatId
+        mediaUrl
+        (extractFilename mediaUrl)
         "https://api.vk.com/method/photos.getMessagesUploadServer"
         []
         "https://api.vk.com/method/photos.saveMessagesPhoto"
@@ -371,15 +379,22 @@ vkcReuploadMedia vkc chatId Channel.MediaPhoto mediaUrl = do
         (\resultList -> do
             [VkSendablePhoto result] <- resultList
             Just result)
-vkcReuploadMedia vkc chatId Channel.MediaDocument mediaUrl = do
-    vkcReuploadMediaGeneral vkc chatId mediaUrl
+vkcReuploadMedia vkc chatId Channel.MediaDocument combinedUrl = do
+    let (filename, mediaUrl) = fromMaybe ("", combinedUrl) $ do
+            (fn, urlstr):_ <- Just $ reads $ Text.unpack combinedUrl
+            Just $ (fn, Text.pack urlstr)
+    vkcReuploadMediaGeneral vkc chatId
+        mediaUrl
+        filename
         "https://api.vk.com/method/docs.getMessagesUploadServer"
         [WebDriver.ParamText "type" $ "doc"]
         "https://api.vk.com/method/docs.save"
         (\(VkDocumentUploadResult file) -> [WebDriver.ParamText "file" $ file])
         (\(VkSendableDocument result) -> Just result)
 vkcReuploadMedia vkc chatId Channel.MediaVoice mediaUrl = do
-    vkcReuploadMediaGeneral vkc chatId mediaUrl
+    vkcReuploadMediaGeneral vkc chatId
+        mediaUrl
+        (extractFilename mediaUrl)
         "https://api.vk.com/method/docs.getMessagesUploadServer"
         [WebDriver.ParamText "type" $ "audio_message"]
         "https://api.vk.com/method/docs.save"
@@ -392,6 +407,7 @@ vkcReuploadMediaGeneral
     :: (FromJSON uploadResult, FromJSON saveResult)
     => VkChannel
     -> Channel.ChatId
+    -> WebDriver.Address
     -> Text.Text
     -> WebDriver.Address
     -> [WebDriver.Param]
@@ -399,9 +415,9 @@ vkcReuploadMediaGeneral
     -> (uploadResult -> [WebDriver.Param])
     -> (saveResult -> Maybe Channel.SendableMedia)
     -> IO Channel.SendableMedia
-vkcReuploadMediaGeneral vkc chatId mediaUrl uploadMethodUrl uploadParams saveMethodUrl saveParamsFunc decodeMediaFunc = do
+vkcReuploadMediaGeneral vkc chatId mediaUrl filename uploadMethodUrl uploadParams saveMethodUrl saveParamsFunc decodeMediaFunc = do
     Logger.info (vkcLogger vkc) $
-        "VkChannel: Possess media " <> mediaUrl
+        "VkChannel: Possess media " <> mediaUrl <> " : " <> filename
     Logger.debug (vkcLogger vkc) $
         "VkChannel: Request an upload server"
     resp <- WebDriver.request (vkcDriver vkc)
@@ -427,7 +443,7 @@ vkcReuploadMediaGeneral vkc chatId mediaUrl uploadMethodUrl uploadParams saveMet
         "VkChannel: Upload the media"
     uploadResult <- WebDriver.request (vkcDriver vkc)
         uploadAddress
-        [ WebDriver.ParamBytes "file" mediaContent
+        [ WebDriver.ParamFile "file" filename mediaContent
         ]
     Logger.debug (vkcLogger vkc) $
         "VkChannel: Save the media"
@@ -454,6 +470,14 @@ vkcReuploadMediaGeneral vkc chatId mediaUrl uploadMethodUrl uploadParams saveMet
                     return $ result
 
 
+extractFilename :: Text.Text -> Text.Text
+extractFilename address = do
+    fromMaybe "" $ do
+        uri <- URI.mkURI address
+        (_, pathElems) <- URI.uriPath uri
+        return $ URI.unRText $ NonEmpty.last $ pathElems
+
+
 encodeRichTextToBuilder :: Channel.RichText -> Builder.Builder
 encodeRichTextToBuilder (Channel.RichTextSpan _ text next) = do
     Builder.fromText text <> encodeRichTextToBuilder next
@@ -474,9 +498,12 @@ keyboardMarkupOpt kbwidth buttons = do
     let buttonvalues = map
             (\(Channel.QueryButton title userdata) -> do
                 object
-                    [ "type" .= String "text"
-                    , "label" .= title
-                    , "payload" .= show userdata ])
+                    [ "action" .= object
+                        [ "type" .= String "text"
+                        , "label" .= title
+                        , "payload" .= show userdata
+                        ]
+                    ])
             buttons
     return $ WebDriver.ParamJson "keyboard" $
         object
@@ -552,6 +579,7 @@ instance FromJSON VkUpdate where
                         }
                 , do
                     attachments <- v .: "attachments"
+                    guard $ not $ null attachments
                     return $ VkUpdateEvent $! Channel.EventMedia
                         { Channel.eChatId = chatId
                         , Channel.eCaption = text
@@ -618,15 +646,21 @@ instance FromJSON VkForeignMedia where
             url <- v .:? "url" .!= ""
             return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaAudio mediaId url
         parseDoc = withObject "VkForeignMediaDocument" $ \v -> do
-            mediaId <- getMediaId "doc" v
+            mediaId <- getPublicMediaId "doc" v
             url <- v .:? "url" .!= ""
-            return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaDocument mediaId url
+            title <- v .:? "title" .!= "a"
+            mext <- v .:? "ext"
+            let ext = maybe "" ('.':) mext
+            let filename = if isSuffixOf ext title
+                    then title
+                    else title ++ ext
+            return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaDocument mediaId (Text.pack (show filename) <> url)
         parseSticker = withObject "VkForeignMediaSticker" $ \v -> do
             stickerId <- v .: "sticker_id"
             let stickerIdStr = show (stickerId :: Integer)
             return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaSticker (Text.pack stickerIdStr) ""
         parseVoice = withObject "VkForeignMediaVoice" $ \v -> do
-            url <- v .: "link_ogg"
+            url <- v .: "link_mp3"
             return $ VkForeignMedia $! Channel.ForeignMedia Channel.MediaVoice "" url
 
 
@@ -706,6 +740,18 @@ instance FromJSON VkSendableVoice where
         parseVoice = withObject "VkMediaVoice" $ \v -> do
             mediaId <- getMediaId "doc" v
             return $ VkSendableVoice $! Channel.SendableMedia Channel.MediaVoice mediaId
+
+
+getPublicMediaId :: String -> Object -> Parser Text.Text
+getPublicMediaId typename v = do
+    ownerId <- v .: "owner_id"
+    let ownerIdStr = show (ownerId :: Integer)
+    localId <- v .: "id"
+    let localIdStr = show (localId :: Integer)
+    maccessKey <- v .:? "access_key"
+    case maccessKey :: Maybe String of
+        Nothing -> return $ Text.pack $ typename <> ownerIdStr <> "_" <> localIdStr
+        Just accessKey -> return $ ""
 
 
 getMediaId :: String -> Object -> Parser Text.Text

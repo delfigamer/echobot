@@ -12,8 +12,10 @@ import GHC.IO.Encoding (textEncodingName)
 import System.IO
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
+import qualified System.Random as Random
 import qualified Channel
-import qualified Channel.Tg
+-- import qualified Channel.Tg
+import qualified Channel.Vk
 import qualified Logger
 import qualified Responder
 import qualified Responder.Repeat
@@ -35,6 +37,7 @@ main = do
                 withResponder (acResponder ac) responderlogger channel $ \responder -> do
                     catch
                         (forever $ Responder.work responder)
+                        -- (Responder.work responder)
                         (logFatal logger)
     where
     logFatal :: Logger.Handle -> SomeException -> IO ()
@@ -44,8 +47,11 @@ main = do
 
 
 withChannel :: ChannelConfig -> Logger.Handle -> WebDriver.Handle -> (Channel.Handle -> IO r) -> IO r
-withChannel (TgChannelConfig conf) logger driver body = do
-    Channel.Tg.withTgChannel conf logger driver body
+-- withChannel (TgChannelConfig conf) logger driver body = do
+    -- Channel.Tg.withTgChannel conf logger driver body
+withChannel (VkChannelConfig conf) logger driver body = do
+    randomSeed <- Random.randomIO
+    Channel.Vk.withVkChannel conf randomSeed logger driver body
 
 
 withLogger :: LoggerConfig -> (Logger.Handle -> IO r) -> IO r
@@ -83,7 +89,8 @@ data AppConfig
 
 
 data ChannelConfig
-    = TgChannelConfig Channel.Tg.Config
+    -- = TgChannelConfig Channel.Tg.Config
+    = VkChannelConfig Channel.Vk.Config
     deriving (Show)
 
 
@@ -119,15 +126,23 @@ instance FromJSON AppConfig where
 
 instance FromJSON ChannelConfig where
     parseJSON = withObject "ChannelConfig" $ \v -> do
-        (parser, obj) <- msum
-            [ (,) parseTg <$> v .: "tg"
-            ]
-        parser obj
+        typename <- v .: "type"
+        case typename of
+            "tg" -> undefined
+            "vk" -> parseVk v
+            _ -> fail $ "unknown channel type: " ++ typename
         where
-        parseTg = withObject "TgChannelConfig" $ \v -> do
-            (TgChannelConfig <$>) $
-                Channel.Tg.Config
+        -- parseTg = withObject "TgChannelConfig" $ \v -> do
+            -- (TgChannelConfig <$>) $
+                -- Channel.Tg.Config
+                    -- <$> v .: "token"
+                    -- <*> v .:? "timeout" .!= 60
+                    -- <*> v .:? "keyboard-width" .!= 5
+        parseVk v = do
+            (VkChannelConfig <$>) $
+                Channel.Vk.Config
                     <$> v .: "token"
+                    <*> v .: "group-id"
                     <*> v .:? "timeout" .!= 60
                     <*> v .:? "keyboard-width" .!= 5
 
@@ -175,6 +190,9 @@ instance FromJSON ResponderConfig where
                     <*> v .:? "inspect-multiplier-cmd" .!= "/repeat"
                     <*> v .:? "inspect-multiplier-msg" .!= "[responder.repeat.inspect-multiplier-msg] %1"
                     <*> v .:? "multiplier-set-msg" .!= "[responder.repeat.multiplier-set-msg] %1"
+                    <*> v .:? "media-unknown-type-msg" .!= "[responder.repeat.media-unknown-type-msg] %1"
+                    <*> v .:? "media-unsupported-msg" .!= "[responder.repeat.media-unsupported-msg]"
+                    <*> v .:? "media-internal-error-msg" .!= "[responder.repeat.media-internal-error-msg]"
                     <*> v .:? "max-multiplier" .!= 5
 
 
