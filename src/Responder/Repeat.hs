@@ -16,6 +16,7 @@ import Control.Monad
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.Aeson
 import Data.IORef
+import Data.List
 import Network.HTTP.Req
 import qualified Data.HashTable.IO as IOTable
 import qualified Data.Text as Text
@@ -35,6 +36,9 @@ data Config
         , cInspectMultiplierCmd :: Text.Text
         , cInspectMultiplierMsg :: Text.Text
         , cMultiplierSetMsg :: Text.Text
+        , cMediaUnknownTypeMsg :: Text.Text
+        , cMediaUnsupportedMsg :: Text.Text
+        , cMediaInternalErrorMsg :: Text.Text
         , cMaxMultiplier :: Int }
     deriving (Show)
 
@@ -82,12 +86,8 @@ erHandleEvent er (Channel.EventMessage chatId _ content@(Channel.RichTextSpan (C
         else erRepeatMessage er chatId content
 erHandleEvent er (Channel.EventMessage chatId _ content) = do
     erRepeatMessage er chatId content
-erHandleEvent er (Channel.EventSticker chatId sticker) = do
-    erRepeatSticker er chatId sticker
-erHandleEvent er (Channel.EventMedia chatId caption media) = do
-    erRepeatMedia er chatId caption media
-erHandleEvent er (Channel.EventMediaGroup chatId _ group) = do
-    erRepeatMediaGroup er chatId group
+erHandleEvent er (Channel.EventMedia chatId caption group) = do
+    erRepeatMedia er chatId caption group
 erHandleEvent er (Channel.EventQuery chatId messageId queryId userdata) = do
     erMakeRequest er "answerQuery" $
         Channel.answerQuery (erChannel er) queryId ""
@@ -113,34 +113,45 @@ erRepeatMessage er chatId content = do
             Channel.sendMessage (erChannel er) chatId content []
 
 
-erRepeatSticker :: RepeatResponder -> Channel.ChatId -> Channel.FileId -> IO ()
-erRepeatSticker er chatId sticker = do
-    mult <- erGetMultiplier er chatId
-    Logger.debug (erLogger er) $
-        "Responder: repeat a sticker into " <> Text.pack (show chatId) <> " " <> Text.pack (show mult) <> " times"
-    replicateM_ mult $ do
-        erMakeRequest er "sendSticker" $
-            Channel.sendSticker (erChannel er) chatId sticker
-
-
-erRepeatMedia :: RepeatResponder -> Channel.ChatId -> Text.Text -> Channel.Media -> IO ()
-erRepeatMedia er chatId caption media = do
+erRepeatMedia :: RepeatResponder -> Channel.ChatId -> Text.Text -> [Channel.ForeignMedia] -> IO ()
+erRepeatMedia er chatId caption inGroup = do
     mult <- erGetMultiplier er chatId
     Logger.debug (erLogger er) $
         "Responder: repeat media into " <> Text.pack (show chatId) <> " " <> Text.pack (show mult) <> " times"
+    possessionResult <- forM inGroup $ Channel.possessMedia (erChannel er) chatId
+    let sendableGroup = selectSuccess possessionResult
+    let unknownTypes = sort $ nub $ selectUnknownType possessionResult
     replicateM_ mult $ do
         erMakeRequest er "sendMedia" $
-            Channel.sendMedia (erChannel er) chatId caption media
-
-
-erRepeatMediaGroup :: RepeatResponder -> Channel.ChatId -> Channel.MediaGroup -> IO ()
-erRepeatMediaGroup er chatId group = do
-    mult <- erGetMultiplier er chatId
-    Logger.debug (erLogger er) $
-        "Responder: repeat a media group into " <> Text.pack (show chatId) <> " " <> Text.pack (show mult) <> " times"
-    replicateM_ mult $ do
-        erMakeRequest er "sendMediaGroup" $
-            Channel.sendMediaGroup (erChannel er) chatId group
+            Channel.sendMedia (erChannel er) chatId caption sendableGroup
+    forM unknownTypes $ \typename -> do
+        erMakeRequest er "sendMessage" $
+            Channel.sendMessage (erChannel er) chatId
+                (Channel.plainText $ substitute [Text.unpack typename] $ cMediaUnknownTypeMsg (erConfig er))
+                []
+    when (containsUnsupported possessionResult) $ do
+        erMakeRequest er "sendMessage" $
+            Channel.sendMessage (erChannel er) chatId
+                (Channel.plainText $ cMediaUnsupportedMsg (erConfig er))
+                []
+    when (containsInternalError possessionResult) $ do
+        erMakeRequest er "sendMessage" $
+            Channel.sendMessage (erChannel er) chatId
+                (Channel.plainText $ cMediaInternalErrorMsg (erConfig er))
+                []
+    where
+    selectSuccess [] = []
+    selectSuccess (Channel.PossessMediaSuccess outMedia:rest) = outMedia:selectSuccess rest
+    selectSuccess (_:rest) = selectSuccess rest
+    selectUnknownType [] = []
+    selectUnknownType (Channel.PossessMediaUnknownType typename:rest) = typename:selectUnknownType rest
+    selectUnknownType (_:rest) = selectUnknownType rest
+    containsUnsupported [] = False
+    containsUnsupported (Channel.PossessMediaUnsupported:_) = True
+    containsUnsupported (_:rest) = containsUnsupported rest
+    containsInternalError [] = False
+    containsInternalError (Channel.PossessMediaInternalError:_) = True
+    containsInternalError (_:rest) = containsInternalError rest
 
 
 erHandleCommand :: RepeatResponder -> Channel.ChatId -> Text.Text -> IO ()
