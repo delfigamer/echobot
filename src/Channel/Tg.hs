@@ -33,7 +33,7 @@ import qualified WebDriver
 data Config
     = Config
         { cToken :: Text
-        , cTimeout :: Int
+        , cTimeout :: Integer
         , cKeyboardWidth :: Int }
     deriving (Show)
 
@@ -44,9 +44,8 @@ withTgChannel conf logger driver body = do
     body $ Channel.Handle
         { Channel.poll = tgcPoll tgc
         , Channel.sendMessage = tgcSendMessage tgc
-        , Channel.sendSticker = tgcSendSticker tgc
         , Channel.sendMedia = tgcSendMedia tgc
-        , Channel.sendMediaGroup = tgcSendMediaGroup tgc
+        , Channel.possessMedia = tgcPossessMedia tgc
         , Channel.updateMessage = tgcUpdateMessage tgc
         , Channel.answerQuery = tgcAnswerQuery tgc }
 
@@ -54,7 +53,7 @@ withTgChannel conf logger driver body = do
 data TgChannel
     = TgChannel
         { tgcToken :: Text
-        , tgcTimeout :: Int
+        , tgcTimeout :: Integer
         , tgcKeyboardWidth :: Int
         , tgcLogger :: Logger.Handle
         , tgcDriver :: WebDriver.Handle
@@ -63,6 +62,8 @@ data TgChannel
 
 tgcNew :: Config -> Logger.Handle -> WebDriver.Handle -> IO TgChannel
 tgcNew conf logger driver = do
+    unless (Text.all isValidTokenChar $ cToken conf) $
+        fail "Invalid token"
     poffset <- newIORef $! -1
     return $ TgChannel
         { tgcToken = cToken conf
@@ -71,6 +72,13 @@ tgcNew conf logger driver = do
         , tgcLogger = logger
         , tgcDriver = driver
         , tgcOffset = poffset }
+    where
+    isValidTokenChar c = False
+        || '0' <= c && c <= '9'
+        || 'a' <= c && c <= 'z'
+        || 'A' <= c && c <= 'Z'
+        || c == '_'
+        || c == ':'
 
 
 tgcPoll :: TgChannel -> IO [Channel.Event]
@@ -80,12 +88,11 @@ tgcPoll tgc = do
         "TgChannel: Current update offset: " <> Text.pack (show oldoffset)
     Logger.info (tgcLogger tgc) $
         "TgChannel: Poll..."
-    let offsetopt = if oldoffset < 0
-        then []
-        else ["offset" .= oldoffset]
-    resp <- WebDriver.request (tgcDriver tgc)
-        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "getUpdates"])
-        (object $ offsetopt <> ["timeout" .= tgcTimeout tgc])
+    let offsetopt = [WebDriver.ParamNum "offset" $ oldoffset | oldoffset >= 0]
+    resp <- WebDriver.request (tgcDriver tgc) ("https://api.telegram.org/" <> tgcToken tgc <> "/getUpdates") $
+        [ WebDriver.ParamNum "timeout" $ tgcTimeout tgc
+        ]
+        <> offsetopt
     case resp of
         TgResponseOk tgupdates -> do
             Logger.info (tgcLogger tgc) $
@@ -112,7 +119,7 @@ tgcPoll tgc = do
                         "TgChannel: Nothing we can do, shut down the channel"
                     fail "Telegram API error"
     where
-    parseUpdates :: [TgUpdate] -> IO [Either Channel.Event TgGroupElem]
+    parseUpdates :: [TgUpdate] -> IO [(Maybe Text.Text, Channel.Event)]
     parseUpdates [] = return $ []
     parseUpdates (tgu:rest) = do
         case tgu of
@@ -120,12 +127,12 @@ tgcPoll tgc = do
                     parseOrWarnOne "message" value
                         (parseUpdates rest)
                         $ \(TgEventMessage mgroupId ev) -> do
-                            (toGroupElem mgroupId ev:) <$> parseUpdates rest
+                            ((mgroupId, ev):) <$> parseUpdates rest
             TgQuery _ value -> do
                 parseOrWarnOne "callback query" value
                     (parseUpdates rest)
                     $ \(TgEventQuery ev) -> do
-                        (Left ev:) <$> parseUpdates rest
+                        ((Nothing, ev):) <$> parseUpdates rest
             TgUnknown _ fields -> do
                 Logger.info (tgcLogger tgc) $
                     "TgChannel: Unknown update type:"
@@ -156,28 +163,18 @@ tgcPoll tgc = do
                 onError
 
 
-groupEvents :: [Either Channel.Event TgGroupElem] -> [Channel.Event]
+groupEvents :: [(Maybe Text.Text, Channel.Event)] -> [Channel.Event]
+groupEvents ((Just groupId1, ev1):rest1)
+    | Channel.EventMedia chatId1 caption1 media1 <- ev1
+    , (Just groupId2, Channel.EventMedia chatId2 caption2 media2):rest2 <- rest1
+    , groupId1 == groupId2
+    , chatId1 == chatId2
+    , Text.null caption2
+        = groupEvents ((Just groupId1, Channel.EventMedia chatId1 caption1 (media1 ++ media2)):rest2)
+    | otherwise
+        = ev1:groupEvents rest1
+groupEvents ((_, ev):rest) = ev:groupEvents rest
 groupEvents [] = []
-groupEvents (Left ev:rest) = ev:groupEvents rest
-groupEvents (Right (TgGroupElem groupId chatId elem):rest) = takeGroup groupId chatId elem rest
-
-
-takeGroup :: Channel.MediaGroupId -> Channel.ChatId -> (Channel.MediaGroup -> Channel.MediaGroup) -> [Either Channel.Event TgGroupElem] -> [Channel.Event]
-takeGroup groupId chatId elem rest = do
-    case rest of
-        Right (TgGroupElem groupId2 chatId2 elem2):rest2
-            | groupId == groupId2
-            , chatId == chatId2 -> do
-                takeGroup groupId chatId (elem . elem2) rest2
-        _ -> do
-            let mine = Channel.EventMediaGroup chatId groupId (elem Channel.MediaGroupEnd)
-            mine:groupEvents rest
-
-
-toGroupElem :: Maybe Channel.MediaGroupId -> Channel.Event -> Either Channel.Event TgGroupElem
-toGroupElem (Just groupId) (Channel.EventMedia chatId caption (Channel.MediaPhoto fileId)) = Right $ TgGroupElem groupId chatId $ Channel.MediaGroupPhoto caption fileId
-toGroupElem (Just groupId) (Channel.EventMedia chatId caption (Channel.MediaVideo fileId)) = Right $ TgGroupElem groupId chatId $ Channel.MediaGroupVideo caption fileId
-toGroupElem _ ev = Left ev
 
 
 tgcSendMessage
@@ -193,11 +190,11 @@ tgcSendMessage tgc chatId content buttons = do
         "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show content)
     Logger.debug (tgcLogger tgc) $
         "TgChannel: \t" <> Text.pack (show buttons)
-    resp <- WebDriver.request (tgcDriver tgc)
-        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "sendMessage"])
-        (object $
-            [ "chat_id" .= chatId
-            ] <> richTextOpt content <> keyboardMarkupOpt (tgcKeyboardWidth tgc) buttons)
+    resp <- WebDriver.request (tgcDriver tgc) ("https://api.telegram.org/" <> tgcToken tgc <> "/sendMessage") $
+        [ WebDriver.ParamNum "chat_id" $ chatId
+        ]
+        <> richTextOpt content
+        <> keyboardMarkupOpt (tgcKeyboardWidth tgc) buttons
     case resp of
         TgResponseOk (TgSentMessageId messageId) -> do
             Logger.debug (tgcLogger tgc) $
@@ -209,121 +206,109 @@ tgcSendMessage tgc chatId content buttons = do
             return $ Left e
 
 
-tgcSendSticker
-    :: TgChannel
-    -> Channel.ChatId
-    -> Channel.FileId
-    -> IO (Either Text ())
-tgcSendSticker tgc chatId sticker = do
-    Logger.info (tgcLogger tgc) $
-        "TgChannel: Send sticker"
-    Logger.debug (tgcLogger tgc) $
-        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show sticker)
-    resp <- WebDriver.request (tgcDriver tgc)
-        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "sendSticker"])
-        (object
-            [ "chat_id" .= chatId
-            , "sticker" .= sticker
-            ])
-    case resp of
-        TgResponseOk (TgVoid _) -> do
-            Logger.debug (tgcLogger tgc) $
-                "TgChannel: Sticker sent"
-            return $ Right ()
-        TgResponseErr e -> do
-            Logger.err (tgcLogger tgc) $
-                "TgChannel: Sticker sending failed: " <> e
-            return $ Left e
-
-
 tgcSendMedia
     :: TgChannel
     -> Channel.ChatId
-    -> Text
-    -> Channel.Media
-    -> IO (Either Text ())
-tgcSendMedia tgc chatId caption media = do
+    -> Text.Text
+    -> [Channel.SendableMedia]
+    -> IO (Either Text.Text ())
+tgcSendMedia tgc chatId caption0 group = do
     Logger.info (tgcLogger tgc) $
         "TgChannel: Send media"
     Logger.debug (tgcLogger tgc) $
-        "TgChannel: \t" <> Text.pack (show chatId) <> " <- "  <> Text.pack (show caption)
+        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show caption0)
     Logger.debug (tgcLogger tgc) $
-        "TgChannel: \t" <> Text.pack (show media)
-    resp <- WebDriver.request (tgcDriver tgc)
-        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, mediaRequestAddress media])
-        (object $
-            [ "chat_id" .= chatId
-            ] <> mediaRequestData media <> mediaCaptionOpt caption)
-    case resp of
-        TgResponseOk (TgVoid _) -> do
-            Logger.debug (tgcLogger tgc) $
-                "TgChannel: Media sent"
-            return $ Right ()
-        TgResponseErr e -> do
-            Logger.err (tgcLogger tgc) $
-                "TgChannel: Media sending failed: " <> e
-            return $ Left e
+        "TgChannel: \t" <> Text.pack (show group)
+    let (trivialLeft, rest) = break isNontrivialMedia group
+    doTrivial (Right ()) caption0 trivialLeft rest
+    where
+    doTrivial current "" [] rest = doNext current rest
+    doTrivial current caption subgroup rest = do
+        Logger.debug (tgcLogger tgc) $
+            "TgChannel: Send trivial: " <> Text.pack (show subgroup)
+        let captionOpt = [WebDriver.ParamText "caption" $ caption | not $ Text.null caption]
+        resp <- case subgroup of
+            [Channel.SendableMedia Channel.MediaPhoto mediaId] -> do
+                WebDriver.request (tgcDriver tgc) ("https://api.telegram.org/" <> tgcToken tgc <> "/sendPhoto") $
+                    [ WebDriver.ParamNum "chat_id" $ chatId
+                    , WebDriver.ParamText "photo" $ mediaId
+                    ]
+                    <> captionOpt
+            [Channel.SendableMedia Channel.MediaVideo mediaId] -> do
+                WebDriver.request (tgcDriver tgc) ("https://api.telegram.org/" <> tgcToken tgc <> "/sendVideo") $
+                    [ WebDriver.ParamNum "chat_id" $ chatId
+                    , WebDriver.ParamText "video" $ mediaId
+                    ]
+                    <> captionOpt
+            _ -> do
+                WebDriver.request (tgcDriver tgc) ("https://api.telegram.org/" <> tgcToken tgc <> "/sendMediaGroup") $
+                    [ WebDriver.ParamNum "chat_id" $ chatId
+                    , WebDriver.ParamJson "media" $ toJSON $ encodeMediaGroup caption subgroup
+                    ]
+        case resp of
+            TgResponseOk (TgVoid _) -> do
+                doNext current rest
+            TgResponseErr e -> do
+                Logger.err (tgcLogger tgc) $
+                    "TgChannel: Media sending failed: " <> e
+                doNext (current >> Left e) rest
+    doSingular current (media@(Channel.SendableMedia mediaType mediaId):rest) = do
+        Logger.debug (tgcLogger tgc) $
+            "TgChannel: Send singular: " <> Text.pack (show media)
+        let (methodUrl, paramName) = case mediaType of
+                Channel.MediaAudio -> ("/sendAudio", "audio")
+                Channel.MediaAnimation -> ("/sendAnimation", "animation")
+                Channel.MediaVoice -> ("/sendVoice", "voice")
+                Channel.MediaSticker -> ("/sendSticker", "sticker")
+                Channel.MediaDocument -> ("/sendDocument", "document")
+                _ -> error "shouldn't happen"
+        resp <- WebDriver.request (tgcDriver tgc) ("https://api.telegram.org/" <> tgcToken tgc <> methodUrl) $
+            [ WebDriver.ParamNum "chat_id" $ chatId
+            , WebDriver.ParamText paramName $ mediaId
+            ]
+        case resp of
+            TgResponseOk (TgVoid _) -> do
+                doNext current rest
+            TgResponseErr e -> do
+                Logger.err (tgcLogger tgc) $
+                    "TgChannel: Sticker sending failed: " <> e
+                doNext (current >> Left e) rest
+    doNext current [] = return current
+    doNext current subgroup = do
+        let (trivialLeft, rest) = break isNontrivialMedia subgroup
+        case trivialLeft of
+            [] -> doSingular current rest
+            _ -> doTrivial current "" trivialLeft rest
+    isNontrivialMedia (Channel.SendableMedia Channel.MediaPhoto _) = False
+    isNontrivialMedia (Channel.SendableMedia Channel.MediaVideo _) = False
+    isNontrivialMedia _ = True
 
 
-mediaRequestAddress :: Channel.Media -> Text
-mediaRequestAddress (Channel.MediaPhoto _) = "sendPhoto"
-mediaRequestAddress (Channel.MediaVideo _) = "sendVideo"
-mediaRequestAddress (Channel.MediaAudio _) = "sendAudio"
-mediaRequestAddress (Channel.MediaAnimation _) = "sendAnimation"
-mediaRequestAddress (Channel.MediaVoice _) = "sendVoice"
-mediaRequestAddress (Channel.MediaDocument _) = "sendDocument"
+encodeMediaGroup :: Text.Text -> [Channel.SendableMedia] -> [Value]
+encodeMediaGroup caption (Channel.SendableMedia mediaType mediaId:rest) = do
+    let captionOpt = ["caption" .= caption | not $ Text.null caption]
+    let typename = case mediaType of
+            Channel.MediaPhoto -> "photo"
+            Channel.MediaVideo -> "video"
+            _ -> error "shouldn't happen"
+    let me = object $
+            [ "type" .= (typename :: Text)
+            , "media" .= mediaId
+            ]
+            <> captionOpt
+    me:encodeMediaGroup "" rest
+encodeMediaGroup _ [] = []
 
 
-mediaRequestData :: KeyValue kv => Channel.Media -> [kv]
-mediaRequestData (Channel.MediaPhoto fileId) = ["photo" .= fileId]
-mediaRequestData (Channel.MediaVideo fileId) = ["video" .= fileId]
-mediaRequestData (Channel.MediaAudio fileId) = ["audio" .= fileId]
-mediaRequestData (Channel.MediaAnimation fileId) = ["animation" .= fileId]
-mediaRequestData (Channel.MediaVoice fileId) = ["voice" .= fileId]
-mediaRequestData (Channel.MediaDocument fileId) = ["document" .= fileId]
-
-
-tgcSendMediaGroup
+tgcPossessMedia
     :: TgChannel
     -> Channel.ChatId
-    -> Channel.MediaGroup
-    -> IO (Either Text ())
-tgcSendMediaGroup tgc chatId group = do
-    Logger.info (tgcLogger tgc) $
-        "TgChannel: Send media group"
-    Logger.debug (tgcLogger tgc) $
-        "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show group)
-    resp <- WebDriver.request (tgcDriver tgc)
-        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "sendMediaGroup"])
-        (object $
-            [ "chat_id" .= chatId
-            , "media" .= encodeMedia group
-            ])
-    case resp of
-        TgResponseOk (TgVoid _) -> do
-            Logger.debug (tgcLogger tgc) $
-                "TgChannel: Media group sent"
-            return $ Right ()
-        TgResponseErr e -> do
-            Logger.err (tgcLogger tgc) $
-                "TgChannel: Media group sending failed: " <> e
-            return $ Left e
-
-
-encodeMedia :: Channel.MediaGroup -> [Value]
-encodeMedia (Channel.MediaGroupPhoto caption fileId next) = do
-    (object $
-        [ "type" .= ("photo" :: Text)
-        , "media" .= fileId
-        ] <> mediaCaptionOpt caption)
-    :encodeMedia next
-encodeMedia (Channel.MediaGroupVideo caption fileId next) = do
-    (object $
-        [ "type" .= ("video" :: Text)
-        , "media" .= fileId
-        ] <> mediaCaptionOpt caption)
-    :encodeMedia next
-encodeMedia Channel.MediaGroupEnd = []
+    -> Channel.ForeignMedia
+    -> IO Channel.PossessMediaOutcome
+tgcPossessMedia _ _ (Channel.ForeignMedia mediaType mediaId _) = do
+    case mediaType of
+        Channel.MediaUnknown -> return $ Channel.PossessMediaUnknownType $ mediaId
+        _ -> return $ Channel.PossessMediaSuccess $ Channel.SendableMedia mediaType mediaId
 
 
 tgcUpdateMessage
@@ -340,12 +325,12 @@ tgcUpdateMessage tgc chatId messageId content buttons = do
         "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show messageId) <> " <- " <> Text.pack (show content)
     Logger.debug (tgcLogger tgc) $
         "TgChannel: \t" <> Text.pack (show buttons)
-    resp <- WebDriver.request (tgcDriver tgc)
-        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "editMessageText"])
-        (object $
-            [ "chat_id" .= chatId
-            , "message_id" .= messageId
-            ] <> richTextOpt content <> keyboardMarkupOpt (tgcKeyboardWidth tgc) buttons)
+    resp <- WebDriver.request (tgcDriver tgc) ("https://api.telegram.org/" <> tgcToken tgc <> "/editMessageText") $
+        [ WebDriver.ParamNum "chat_id" $ chatId
+        , WebDriver.ParamNum "message_id" $ messageId
+        ]
+        <> richTextOpt content
+        <> keyboardMarkupOpt (tgcKeyboardWidth tgc) buttons
     case resp of
         TgResponseOk (TgVoid _) -> do
             Logger.debug (tgcLogger tgc) $
@@ -367,11 +352,10 @@ tgcAnswerQuery tgc queryId text = do
         "TgChannel: Answer query"
     Logger.debug (tgcLogger tgc) $
         "TgChannel: \t" <> Text.pack (show queryId) <> " <- " <> Text.pack (show text)
-    resp <- WebDriver.request (tgcDriver tgc)
-        (WebDriver.HttpsAddress "api.telegram.org" [tgcToken tgc, "answerCallbackQuery"])
-        (if Text.null text
-            then object ["callback_query_id" .= queryId]
-            else object ["callback_query_id" .= queryId, "text" .= text])
+    resp <- WebDriver.request (tgcDriver tgc) ("https://api.telegram.org/" <> tgcToken tgc <> "/answerCallbackQuery") $
+        [ WebDriver.ParamText "callback_query_id" $ queryId
+        , WebDriver.ParamText "text" $ text
+        ]
     case resp of
         TgResponseOk (TgVoid _) -> do
             Logger.debug (tgcLogger tgc) $
@@ -383,7 +367,7 @@ tgcAnswerQuery tgc queryId text = do
             return $ Left e
 
 
-keyboardMarkupOpt :: KeyValue kv => Int -> [Channel.QueryButton] -> [kv]
+keyboardMarkupOpt :: Int -> [Channel.QueryButton] -> [WebDriver.Param]
 keyboardMarkupOpt _ [] = []
 keyboardMarkupOpt kbwidth buttons = do
     let buttonvalues = map
@@ -393,7 +377,7 @@ keyboardMarkupOpt kbwidth buttons = do
                     , "callback_data" .= userdata ])
             buttons
     let value = object ["inline_keyboard" .= sectionList kbwidth buttonvalues]
-    ["reply_markup" .= TextLazy.toStrict (encodeToLazyText value)]
+    [WebDriver.ParamJson "reply_markup" $ value]
     where
     sectionList len xs = do
         case splitAt len xs of
@@ -401,41 +385,36 @@ keyboardMarkupOpt kbwidth buttons = do
             (h, r) -> h:sectionList len r
 
 
-mediaCaptionOpt :: KeyValue kv => Text -> [kv]
-mediaCaptionOpt "" = []
-mediaCaptionOpt caption = ["caption" .= caption]
-
-
-richTextOpt :: KeyValue kv => Channel.RichText -> [kv]
+richTextOpt :: Channel.RichText -> [WebDriver.Param]
 richTextOpt (Channel.RichTextSpan (Channel.SpanStyle False False False False) text Channel.RichTextEnd) =
-    [ "text" .= text
+    [ WebDriver.ParamText "text" $ text
     ]
 richTextOpt rt =
-    [ "text" .= Builder.toLazyText (encodeRichTextBuild rt)
-    , "parse_mode" .= ("HTML" :: Text)
+    [ WebDriver.ParamTextLazy "text" $ Builder.toLazyText $ encodeRichText rt
+    , WebDriver.ParamText "parse_mode" $ "HTML"
     ]
 
 
-encodeRichTextBuild :: Channel.RichText -> Builder.Builder
-encodeRichTextBuild (Channel.RichTextSpan (Channel.SpanStyle bold italic underline strike) text next) = do
+encodeRichText :: Channel.RichText -> Builder.Builder
+encodeRichText (Channel.RichTextSpan (Channel.SpanStyle bold italic underline strike) text next) = do
     let mine =
             surround "<b>" "</b>" bold $
                 surround "<i>" "</i>" italic $
                     surround "<u>" "</u>" underline $
                         surround "<s>" "</s>" strike $
                             escapeHtml text
-    mine <> encodeRichTextBuild next
-encodeRichTextBuild (Channel.RichTextLink href title next) = do
-    "<a href=\"" <> escapeHtml href <> "\">" <> encodeRichTextBuild title <> "</a>" <> encodeRichTextBuild next
-encodeRichTextBuild (Channel.RichTextMention user title next) = do
-    "<a href=\"tg://user?id=" <> escapeHtml user <> "\">" <> encodeRichTextBuild title <> "</a>" <> encodeRichTextBuild next
-encodeRichTextBuild (Channel.RichTextMono text next) = do
-    "<code>" <> escapeHtml text <> "</code>" <> encodeRichTextBuild next
-encodeRichTextBuild (Channel.RichTextCode "" text next) = do
-    "<pre>" <> escapeHtml text <> "</pre>" <> encodeRichTextBuild next
-encodeRichTextBuild (Channel.RichTextCode language text next) = do
-    "<pre><code class=\"language-" <> escapeHtml language <> "\">" <> escapeHtml text <> "</code></pre>" <> encodeRichTextBuild next
-encodeRichTextBuild Channel.RichTextEnd = mempty
+    mine <> encodeRichText next
+encodeRichText (Channel.RichTextLink href title next) = do
+    "<a href=\"" <> escapeHtml href <> "\">" <> encodeRichText title <> "</a>" <> encodeRichText next
+encodeRichText (Channel.RichTextMention user title next) = do
+    "<a href=\"tg://user?id=" <> escapeHtml user <> "\">" <> encodeRichText title <> "</a>" <> encodeRichText next
+encodeRichText (Channel.RichTextMono text next) = do
+    "<code>" <> escapeHtml text <> "</code>" <> encodeRichText next
+encodeRichText (Channel.RichTextCode "" text next) = do
+    "<pre>" <> escapeHtml text <> "</pre>" <> encodeRichText next
+encodeRichText (Channel.RichTextCode language text next) = do
+    "<pre><code class=\"language-" <> escapeHtml language <> "\">" <> escapeHtml text <> "</code></pre>" <> encodeRichText next
+encodeRichText Channel.RichTextEnd = mempty
 
 
 surround :: Builder.Builder -> Builder.Builder -> Bool -> Builder.Builder -> Builder.Builder
@@ -458,10 +437,6 @@ escapeHtmlChar c = Builder.singleton c
 data TgResponse a
     = TgResponseOk a
     | TgResponseErr Text
-
-
-data TgGroupElem
-    = TgGroupElem Channel.MediaGroupId Channel.ChatId (Channel.MediaGroup -> Channel.MediaGroup)
 
 
 data TgUpdate
@@ -493,7 +468,7 @@ instance FromJSON TgUpdate where
             , return $ TgUnknown updateId (HashMap.keys v) ]
 
 
-data TgEventMessage = TgEventMessage (Maybe Channel.MediaGroupId) Channel.Event
+data TgEventMessage = TgEventMessage (Maybe Text.Text) Channel.Event
 
 
 instance FromJSON TgEventMessage where
@@ -501,33 +476,28 @@ instance FromJSON TgEventMessage where
         chatId <- m .: "chat" >>= (.: "id")
         mgroupId <- m .:? "media_group_id"
         msum
-            [ parseMsgSticker chatId mgroupId m
-            , parseMsgMedia chatId mgroupId m
+            [ parseMsgMedia chatId mgroupId m
             , parseMsgText chatId mgroupId m
             ]
         where
-        parseMsgSticker chatId mgroupId m = do
-            sticker <- m .: "sticker" >>= (.: "file_id")
-            return $ TgEventMessage mgroupId $ Channel.EventSticker
-                { Channel.eChatId = chatId
-                , Channel.eSticker = sticker }
         parseMsgMedia chatId mgroupId m = do
             caption <- m .:? "caption" .!= ""
             media <- msum
                 [ (m .: "photo" >>=) $ withArray "PhotoSizes" $ \sizes -> do
                     Just size0 <- return $ sizes Vector.!? 0
                     flip (withObject "Photo") size0 $ \photo -> do
-                        Channel.MediaPhoto <$> photo .: "file_id"
-                , Channel.MediaVideo <$> (m .: "video" >>= (.: "file_id"))
-                , Channel.MediaAudio <$> (m .: "audio" >>= (.: "file_id"))
-                , Channel.MediaAnimation <$> (m .: "animation" >>= (.: "file_id"))
-                , Channel.MediaVoice <$> (m .: "voice" >>= (.: "file_id"))
-                , Channel.MediaDocument <$> (m .: "document" >>= (.: "file_id"))
+                        makeMedia Channel.MediaPhoto <$> photo .: "file_id"
+                , makeMedia Channel.MediaVideo <$> (m .: "video" >>= (.: "file_id"))
+                , makeMedia Channel.MediaAudio <$> (m .: "audio" >>= (.: "file_id"))
+                , makeMedia Channel.MediaAnimation <$> (m .: "animation" >>= (.: "file_id"))
+                , makeMedia Channel.MediaVoice <$> (m .: "voice" >>= (.: "file_id"))
+                , makeMedia Channel.MediaSticker <$> (m .: "sticker" >>= (.: "file_id"))
+                , makeMedia Channel.MediaDocument <$> (m .: "document" >>= (.: "file_id"))
                 ]
             return $ TgEventMessage mgroupId $ Channel.EventMedia
                 { Channel.eChatId = chatId
                 , Channel.eCaption = caption
-                , Channel.eMedia = media }
+                , Channel.eMedia = [media] }
         parseMsgText chatId mgroupId m = do
             messageId <- m .: "message_id"
             text <- m .: "text"
@@ -536,6 +506,7 @@ instance FromJSON TgEventMessage where
                 { Channel.eChatId = chatId
                 , Channel.eMessageId = messageId
                 , Channel.eMessage = parseMessageText text entities }
+        makeMedia mediaType mediaId = Channel.ForeignMedia mediaType mediaId ""
 
 
 data TgTextEntity
@@ -569,21 +540,6 @@ instance FromJSON TgTextEntity where
                 return $ TgTextMention user
             _ -> return $ TgTextIgnore
         return $ TgTextEntity ofs (ofs + len) enkind
-
-
-newtype TgEventGroupElem = TgEventGroupElem (Channel.MediaGroup -> Channel.MediaGroup)
-
-
-instance FromJSON TgEventGroupElem where
-    parseJSON = withObject "TgGroupElem" $ \m -> do
-        caption <- m .:? "caption" .!= ""
-        msum
-            [ (m .: "photo" >>=) $ withArray "PhotoSizes" $ \sizes -> do
-                Just size0 <- return $ sizes Vector.!? 0
-                flip (withObject "Photo") size0 $ \photo -> do
-                    (TgEventGroupElem . Channel.MediaGroupPhoto caption) <$> photo .: "file_id"
-            , (TgEventGroupElem . Channel.MediaGroupVideo caption) <$> (m .: "video" >>= (.: "file_id"))
-            ]
 
 
 newtype TgEventQuery = TgEventQuery Channel.Event

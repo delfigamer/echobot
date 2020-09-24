@@ -9,6 +9,7 @@ module Logger
     , loggerFilter
     , withNullLogger
     , withFileLogger
+    , withTestLogger
     , withStdLogger
     , withMultiLogger
     , debug
@@ -20,6 +21,7 @@ module Logger
 
 import Control.Exception
 import Control.Monad
+import Data.IORef
 import Data.Text (Text, pack)
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Format (formatTime, defaultTimeLocale)
@@ -66,9 +68,6 @@ err :: Handle -> Text -> IO ()
 err h = send h Err
 
 
-{--}
-
-
 loggerFilter :: LogLevel -> Handle -> Handle
 loggerFilter minlevel inner = do
     Handle
@@ -76,16 +75,10 @@ loggerFilter minlevel inner = do
             when (level >= minlevel) $ send inner level text }
 
 
-{--}
-
-
 withNullLogger :: (Handle -> IO r) -> IO r
 withNullLogger body = do
     body $ Handle
         { send = \level text -> return () }
-
-
-{--}
 
 
 withFileLogger :: FilePath -> (Handle -> IO r) -> IO r
@@ -109,7 +102,24 @@ newFileLogger path = do
         }
 
 
-{--}
+-- this logger is intended to be used in test suites
+-- if the test within `body` runs successfully, then all the output gets dropped
+-- otherwise, if `body` throws - all the output gets written into the console, and the exception (test failure) is passed along unchanged
+-- in other words: if `body` doesn't throw, `withTestLogger` behaves like `withNullLogger`
+-- otherwise, if `body` does throw, then `withTestLogger` behaves as if it was `withStdLogger` all along
+withTestLogger :: (Handle -> IO r) -> IO r
+withTestLogger body = do
+    pbuf <- newIORef $ return ()
+    onException
+        (doBody pbuf)
+        (writeOutput pbuf)
+    where
+    doBody pbuf = do
+        body $ Handle
+            { send = \level text -> modifyIORef' pbuf (>> sendStd level text)
+            }
+    writeOutput pbuf = do
+        join $ readIORef pbuf
 
 
 withStdLogger :: (Handle -> IO r) -> IO r
@@ -127,9 +137,6 @@ sendStd level text = do
         _ -> return ()
     TextIO.putStrLn $ pack (show level) <> ": " <> text
     setSGR [Reset]
-
-
-{--}
 
 
 withMultiLogger :: Handle -> Handle -> (Handle -> IO r) -> IO r

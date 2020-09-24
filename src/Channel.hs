@@ -2,7 +2,6 @@ module Channel
     ( ChatId
     , MessageId
     , FileId
-    , MediaGroupId
     , QueryId
     , QueryUserdata
     , SpanStyle(..)
@@ -25,7 +24,6 @@ import Data.Text
 type ChatId = Integer
 type MessageId = Integer
 type FileId = Text
-type MediaGroupId = Text
 type QueryId = Text
 type QueryUserdata = Text
 

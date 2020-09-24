@@ -123,8 +123,7 @@ vkcPoll vkc = do
     requestServer = do
         Logger.info (vkcLogger vkc) $
             "VkChannel: Request a long poll server"
-        resp <- WebDriver.request (vkcDriver vkc)
-            "https://api.vk.com/method/groups.getLongPollServer"
+        resp <- WebDriver.request (vkcDriver vkc) "https://api.vk.com/method/groups.getLongPollServer" $
             [ WebDriver.ParamText "v" $ apiVersion
             , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
             , WebDriver.ParamNum "group_id" $ cGroupId $ vkcConfig vkc
@@ -145,8 +144,7 @@ vkcPoll vkc = do
             "VkChannel: Current update offset: " <> Text.pack (show pollTs)
         Logger.info (vkcLogger vkc) $
             "VkChannel: Poll..."
-        resp <- WebDriver.request (vkcDriver vkc)
-            pollAddress
+        resp <- WebDriver.request (vkcDriver vkc) pollAddress $
             [ WebDriver.ParamText "key" $ pollKey
             , WebDriver.ParamText "ts" $ pollTs
             , WebDriver.ParamText "act" $ "a_check"
@@ -154,8 +152,8 @@ vkcPoll vkc = do
             ]
         case resp of
             VkPollFail -> do
-                Logger.err (vkcLogger vkc) $
-                    "VkChannel: Request failed"
+                Logger.info (vkcLogger vkc) $
+                    "VkChannel: Poll request failed"
                 return $ Nothing
             VkPollUpdates newTs updates -> do
                 Logger.info (vkcLogger vkc) $
@@ -191,15 +189,14 @@ vkcSendMessage vkc chatId content buttons = do
             randomState1 <- readIORef (vkcRandomState vkc)
             let (randomId, randomState2) = Random.random randomState1
             writeIORef (vkcRandomState vkc) $! randomState2
-            resp <- WebDriver.request (vkcDriver vkc)
-                "https://api.vk.com/method/messages.send"
-                (   [ WebDriver.ParamText "v" $ apiVersion
-                    , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
-                    , WebDriver.ParamNum "peer_id" $ chatId
-                    , WebDriver.ParamNum "random_id" $ toInteger (randomId :: Word)
-                    , WebDriver.ParamTextLazy "message" $ text
-                    ]
-                <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons)
+            resp <- WebDriver.request (vkcDriver vkc) "https://api.vk.com/method/messages.send" $
+                [ WebDriver.ParamText "v" $ apiVersion
+                , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+                , WebDriver.ParamNum "peer_id" $ chatId
+                , WebDriver.ParamNum "random_id" $ toInteger (randomId :: Word)
+                , WebDriver.ParamTextLazy "message" $ text
+                ]
+                <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons
             case resp of
                 VkError e -> do
                     Logger.err (vkcLogger vkc) $
@@ -234,8 +231,7 @@ vkcSendMedia vkc chatId caption0 group = do
         randomState1 <- readIORef (vkcRandomState vkc)
         let (randomId, randomState2) = Random.random randomState1
         writeIORef (vkcRandomState vkc) $! randomState2
-        resp <- WebDriver.request (vkcDriver vkc)
-            "https://api.vk.com/method/messages.send"
+        resp <- WebDriver.request (vkcDriver vkc) "https://api.vk.com/method/messages.send" $
             [ WebDriver.ParamText "v" $ apiVersion
             , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
             , WebDriver.ParamNum "peer_id" $ chatId
@@ -257,8 +253,7 @@ vkcSendMedia vkc chatId caption0 group = do
         randomState1 <- readIORef (vkcRandomState vkc)
         let (randomId, randomState2) = Random.random randomState1
         writeIORef (vkcRandomState vkc) $! randomState2
-        resp <- WebDriver.request (vkcDriver vkc)
-            "https://api.vk.com/method/messages.send"
+        resp <- WebDriver.request (vkcDriver vkc) "https://api.vk.com/method/messages.send" $
             [ WebDriver.ParamText "v" $ apiVersion
             , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
             , WebDriver.ParamNum "peer_id" $ chatId
@@ -319,25 +314,23 @@ vkcUpdateMessage vkc chatId messageId content buttons = do
             randomState1 <- readIORef (vkcRandomState vkc)
             let (randomId, randomState2) = Random.random randomState1
             writeIORef (vkcRandomState vkc) $! randomState2
-            WebDriver.request (vkcDriver vkc)
-                "https://api.vk.com/method/messages.send"
-                (   [ WebDriver.ParamText "v" $ apiVersion
-                    , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
-                    , WebDriver.ParamNum "peer_id" $ chatId
-                    , WebDriver.ParamNum "random_id" $ toInteger (randomId :: Word)
-                    , WebDriver.ParamTextLazy "message" $ Builder.toLazyText $ encodeRichTextToBuilder content
-                    ]
-                <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons)
+            WebDriver.request (vkcDriver vkc) "https://api.vk.com/method/messages.send" $
+                [ WebDriver.ParamText "v" $ apiVersion
+                , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+                , WebDriver.ParamNum "peer_id" $ chatId
+                , WebDriver.ParamNum "random_id" $ toInteger (randomId :: Word)
+                , WebDriver.ParamTextLazy "message" $ Builder.toLazyText $ encodeRichTextToBuilder content
+                ]
+                <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons
         else do
-            WebDriver.request (vkcDriver vkc)
-                "https://api.vk.com/method/messages.edit"
-                (   [ WebDriver.ParamText "v" $ apiVersion
-                    , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
-                    , WebDriver.ParamNum "peer_id" $ chatId
-                    , WebDriver.ParamNum "message_id" $ messageId
-                    , WebDriver.ParamTextLazy "message" $ Builder.toLazyText $ encodeRichTextToBuilder content
-                    ]
-                <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons)
+            WebDriver.request (vkcDriver vkc) "https://api.vk.com/method/messages.edit" $
+                [ WebDriver.ParamText "v" $ apiVersion
+                , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+                , WebDriver.ParamNum "peer_id" $ chatId
+                , WebDriver.ParamNum "message_id" $ messageId
+                , WebDriver.ParamTextLazy "message" $ Builder.toLazyText $ encodeRichTextToBuilder content
+                ]
+                <> keyboardMarkupOpt (cKeyboardWidth (vkcConfig vkc)) buttons
     case resp of
         VkError e -> do
             Logger.err (vkcLogger vkc) $
@@ -420,13 +413,12 @@ vkcReuploadMediaGeneral vkc chatId mediaUrl filename uploadMethodUrl uploadParam
         "VkChannel: Possess media " <> mediaUrl <> " : " <> filename
     Logger.debug (vkcLogger vkc) $
         "VkChannel: Request an upload server"
-    resp <- WebDriver.request (vkcDriver vkc)
-        uploadMethodUrl
-        (   [ WebDriver.ParamText "v" $ apiVersion
-            , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
-            , WebDriver.ParamNum "peer_id" $ chatId
-            ]
-        <> uploadParams)
+    resp <- WebDriver.request (vkcDriver vkc) uploadMethodUrl $
+        [ WebDriver.ParamText "v" $ apiVersion
+        , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+        , WebDriver.ParamNum "peer_id" $ chatId
+        ]
+        <> uploadParams
     uploadAddress <- case resp of
         VkError err -> do
             Logger.err (vkcLogger vkc) $
@@ -441,18 +433,16 @@ vkcReuploadMediaGeneral vkc chatId mediaUrl filename uploadMethodUrl uploadParam
     mediaContent <- WebDriver.download (vkcDriver vkc) mediaUrl
     Logger.debug (vkcLogger vkc) $
         "VkChannel: Upload the media"
-    uploadResult <- WebDriver.request (vkcDriver vkc)
-        uploadAddress
+    uploadResult <- WebDriver.request (vkcDriver vkc) uploadAddress $
         [ WebDriver.ParamFile "file" filename mediaContent
         ]
     Logger.debug (vkcLogger vkc) $
         "VkChannel: Save the media"
-    resp <- WebDriver.request (vkcDriver vkc)
-        saveMethodUrl
-        (   [ WebDriver.ParamText "v" $ apiVersion
-            , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
-            ]
-        <> saveParamsFunc uploadResult)
+    resp <- WebDriver.request (vkcDriver vkc) saveMethodUrl $
+        [ WebDriver.ParamText "v" $ apiVersion
+        , WebDriver.ParamText "access_token" $ cToken $ vkcConfig vkc
+        ]
+        <> saveParamsFunc uploadResult
     case resp of
         VkError err -> do
             Logger.err (vkcLogger vkc) $
@@ -505,11 +495,11 @@ keyboardMarkupOpt kbwidth buttons = do
                         ]
                     ])
             buttons
-    return $ WebDriver.ParamJson "keyboard" $
-        object
+    let keyboard = object
             [ "buttons" .= sectionList kbwidth buttonvalues
             , "one_time" .= True
             ]
+    [WebDriver.ParamJson "keyboard" $ keyboard]
     where
     sectionList len xs = do
         case splitAt len xs of

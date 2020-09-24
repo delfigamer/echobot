@@ -2,4 +2,6 @@
 *~
 *.log
 config.yaml
+vk.yaml
+tg.yaml
 !.gitignore

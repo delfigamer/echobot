@@ -32,67 +32,7 @@ import qualified Channel
 import qualified Channel.Vk.Internal as Vk
 import qualified Logger
 import qualified WebDriver
-
-
-data ExpectedRequest
-    = ExpectedRequest !WebDriver.Address [WebDriver.Param] !Value
-    | ExpectedDownload !Text.Text !BSL.ByteString
-    deriving (Show)
-
-
-withTestDriver
-    :: (IORef [ExpectedRequest] -> WebDriver.Handle -> IO r)
-    -> IO r
-withTestDriver body = do
-    pbuf <- newIORef []
-    body pbuf $ WebDriver.Handle
-            { WebDriver.request = testDriverRequest pbuf
-            , WebDriver.download = testDriverDownload pbuf
-            }
-
-
-testDriverRequest
-    :: (FromJSON b)
-    => IORef [ExpectedRequest] -> WebDriver.Address -> [WebDriver.Param] -> IO b
-testDriverRequest pbuf address params = do
-    ExpectedRequest address2 params2 result:rest <- readIORef pbuf
-    (address, normalizeParamSet params) `shouldBe` (address2, normalizeParamSet params2)
-    writeIORef pbuf $! rest
-    case fromJSON result of
-        Error err -> fail err
-        Success x -> return $ x
-
-
-testDriverDownload
-    :: IORef [ExpectedRequest] -> Text.Text -> IO BSL.ByteString
-testDriverDownload pbuf address = do
-    ExpectedDownload address2 result:rest <- readIORef pbuf
-    address `shouldBe` address2
-    writeIORef pbuf $! rest
-    return $ result
-
-
-normalizeParamSet :: [WebDriver.Param] -> [WebDriver.Param]
-normalizeParamSet params = sortOn WebDriver.paramName $ map normalize $ params
-    where
-    normalize (WebDriver.ParamTextLazy name text) = WebDriver.ParamText name $ TextLazy.toStrict text
-    normalize (WebDriver.ParamNum name num) = WebDriver.ParamText name $ Text.pack $ show num
-    normalize param = param
-
-
-perform
-    :: (Show r, Eq r)
-    => IORef [ExpectedRequest]
-    -> IO r
-    -> [ExpectedRequest]
-    -> (r -> IO q)
-    -> IO q
-perform pbuf act reqs rettest = do
-    writeIORef pbuf $! reqs
-    ret <- act
-    bufrest <- readIORef pbuf
-    bufrest `shouldSatisfy` null
-    rettest ret
+import WebDriver.Test
 
 
 spec :: Spec
@@ -110,136 +50,136 @@ spec = do
         let randomSeed = 1
         let randoms = map toInteger $ (Random.randoms $ Random.mkStdGen randomSeed :: [Word])
         it "performs a long poll" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/groups.getLongPollServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "group_id" $ groupId
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "key" .= String "lpkey"
                                         , "server" .= String "https://lp.vk.com/lpadr/lpadr2"
                                         , "ts" .= String "1"
                                         ]
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "1"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "1"
                                     , "updates" .= Array mempty
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [])
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "1"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "1"
                                     , "updates" .= Array mempty
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [])
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "1"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "20"
                                     , "failed" .= Number 1
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [])
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "20"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "failed" .= Number 2
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://api.vk.com/method/groups.getLongPollServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "group_id" $ groupId
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "key" .= String "lpkey2"
                                         , "server" .= String "https://lp.vk.com/lpadr/lpadr2"
                                         , "ts" .= String "30"
                                         ]
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey2"
                                 , WebDriver.ParamText "ts" $ "30"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "30"
                                     , "updates" .= Array mempty
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [])
         it "receives plain text messages" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/groups.getLongPollServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "group_id" $ groupId
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "key" .= String "lpkey"
                                         , "server" .= String "https://lp.vk.com/lpadr/lpadr2"
                                         , "ts" .= String "10"
                                         ]
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "10"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "20"
                                     , "updates" .=
                                         [ object
@@ -263,39 +203,39 @@ spec = do
                                                 ]
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMessage 100 10 $ Channel.plainText "100 message text"
                                 , Channel.EventMessage 200 11 $ Channel.plainText "200 message text"
                                 ])
         it "receives media messages" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/groups.getLongPollServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "group_id" $ groupId
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "key" .= String "lpkey"
                                         , "server" .= String "https://lp.vk.com/lpadr/lpadr2"
                                         , "ts" .= String "10"
                                         ]
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "10"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "20"
                                     , "updates" .=
                                         [ object
@@ -396,7 +336,7 @@ spec = do
                                                 ]
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMedia 100 "100 message text"
@@ -412,16 +352,16 @@ spec = do
                                     , Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"
                                     ]
                                 ])
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "20"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "30"
                                     , "updates" .=
                                         [ object
@@ -478,7 +418,7 @@ spec = do
                                                 ]
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMedia 100 "100 message text"
@@ -490,16 +430,16 @@ spec = do
                                     , Channel.ForeignMedia Channel.MediaVideo "!video18_40_efef" ""
                                     ]
                                 ])
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "30"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "40"
                                     , "updates" .=
                                         [ object
@@ -547,7 +487,7 @@ spec = do
                                                 ]
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
@@ -558,16 +498,16 @@ spec = do
                                     [ Channel.ForeignMedia Channel.MediaAudio "audio17_30" ""
                                     ]
                                 ])
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "40"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "50"
                                     , "updates" .=
                                         [ object
@@ -627,7 +567,7 @@ spec = do
                                                 ]
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
@@ -639,16 +579,16 @@ spec = do
                                     , Channel.ForeignMedia Channel.MediaDocument "" "\"a\"https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"
                                     ]
                                 ])
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "50"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "60"
                                     , "updates" .=
                                         [ object
@@ -669,23 +609,23 @@ spec = do
                                                 ]
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
                                     [ Channel.ForeignMedia Channel.MediaSticker "450" ""
                                     ]
                                 ])
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "60"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "70"
                                     , "updates" .=
                                         [ object
@@ -729,7 +669,7 @@ spec = do
                                                 ]
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
@@ -739,16 +679,16 @@ spec = do
                                     [ Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/60.mp3"
                                     ]
                                 ])
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "70"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "80"
                                     , "updates" .=
                                         [ object
@@ -766,7 +706,7 @@ spec = do
                                                 ]
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMedia 100 ""
@@ -775,40 +715,40 @@ spec = do
                                 ])
                         -- {- attachents with an access_key that come from group chats are busted, see Channel.Vk.Internal for a more detailed explanation -}
         it "re-posesses photos" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "photo17_30_cdcd" "https://srv.userapi.com/group/file6.jpg"))
                             []
                             (flip shouldBe $
                                 Channel.PossessMediaSuccess $ Channel.SendableMedia Channel.MediaPhoto "photo17_30_cdcd")
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/photos.getMessagesUploadServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "peer_id" $ 100
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "upload_url" .= String "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
                                         ]
-                                    ])
-                            , ExpectedDownload
+                                    ]
+                            , Download
                                 "https://srv.userapi.com/group/file7.jpg"
-                                "<contents of file7.jpg>"
-                            , ExpectedRequest
+                                |>> "<contents of file7.jpg>"
+                            , Request
                                 "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
                                 [ WebDriver.ParamFile "file" "file7.jpg" $ "<contents of file7.jpg>"
                                 ]
-                                (object
+                                |>> object
                                     [ "server" .= Number 1234
                                     , "photo" .= String "{\"key\":\"value\"}"
                                     , "hash" .= String "56ff"
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://api.vk.com/method/photos.saveMessagesPhoto"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -816,7 +756,7 @@ spec = do
                                 , WebDriver.ParamText "photo" $ "{\"key\":\"value\"}"
                                 , WebDriver.ParamText "hash" $ "56ff"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .=
                                         [ object
                                             [ "owner_id" .= Number 10
@@ -824,36 +764,36 @@ spec = do
                                             , "access_key" .= String "acdf"
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Channel.PossessMediaSuccess $ Channel.SendableMedia Channel.MediaPhoto "photo10_67_acdf")
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/photos.getMessagesUploadServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "peer_id" $ 100
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "upload_url" .= String "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
                                         ]
-                                    ])
-                            , ExpectedDownload
+                                    ]
+                            , Download
                                 "https://srv.userapi.com/group/file7.jpg"
-                                "<contents of file7.jpg>"
-                            , ExpectedRequest
+                                |>> "<contents of file7.jpg>"
+                            , Request
                                 "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
                                 [ WebDriver.ParamFile "file" "file7.jpg" $ "<contents of file7.jpg>"
                                 ]
-                                (object
+                                |>> object
                                     [ "server" .= Number 1234
                                     , "photo" .= String "{\"key\":\"value\"}"
                                     , "hash" .= String "56ff"
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://api.vk.com/method/photos.saveMessagesPhoto"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -861,37 +801,37 @@ spec = do
                                 , WebDriver.ParamText "photo" $ "{\"key\":\"value\"}"
                                 , WebDriver.ParamText "hash" $ "56ff"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Array mempty
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Channel.PossessMediaInternalError)
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/photos.getMessagesUploadServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "peer_id" $ 100
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "upload_url" .= String "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
                                         ]
-                                    ])
-                            , ExpectedDownload
+                                    ]
+                            , Download
                                 "https://srv.userapi.com/group/file7.jpg"
-                                "<contents of file7.jpg>"
-                            , ExpectedRequest
+                                |>> "<contents of file7.jpg>"
+                            , Request
                                 "https://pu.vk.com/c6/ss7/upload.php?act=do_add&mid=1&aid=2&gid=3&hash=4&rhash=5&swfupload=1&api=1&mailphoto=1"
                                 [WebDriver.ParamFile "file" "file7.jpg" "<contents of file7.jpg>"]
-                                (object
+                                |>> object
                                     [ "server" .= Number 1234
                                     , "photo" .= String "{\"key\":\"value\"}"
                                     , "hash" .= String "56ff"
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://api.vk.com/method/photos.saveMessagesPhoto"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -899,66 +839,66 @@ spec = do
                                 , WebDriver.ParamText "photo" $ "{\"key\":\"value\"}"
                                 , WebDriver.ParamText "hash" $ "56ff"
                                 ]
-                                (object
+                                |>> object
                                     [ "error" .= object ["error_msg" .= String "failed"]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Channel.PossessMediaInternalError)
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" "https://srv.userapi.com/group/file7.jpg"))
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/photos.getMessagesUploadServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "peer_id" $ 100
                                 ]
-                                (object
+                                |>> object
                                     [ "error" .= object ["error_msg" .= String "failed"]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Channel.PossessMediaInternalError)
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaPhoto "!photo18_40_efef" ""))
                             []
                             (flip shouldBe $
                                 Channel.PossessMediaUnsupported)
         it "re-posesses documents" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaDocument "" "\"mydoc.txt\"https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"))
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/docs.getMessagesUploadServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "peer_id" $ 100
                                 , WebDriver.ParamText "type" $ "doc"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "upload_url" .= String "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
                                         ]
-                                    ])
-                            , ExpectedDownload
+                                    ]
+                            , Download
                                 "https://vk.com/doc18_40?hash=1&dl=2&api=1&no_preview=1"
-                                "<contents of doc18_40>"
-                            , ExpectedRequest
+                                |>> "<contents of doc18_40>"
+                            , Request
                                 "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
                                 [ WebDriver.ParamFile "file" "mydoc.txt" $ "<contents of doc18_40>"
                                 ]
-                                (object
+                                |>> object
                                     [ "file" .= String "newdoc|5678cdef"
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://api.vk.com/method/docs.save"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamText "file" $ "newdoc|5678cdef"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "type" .= String "doc"
                                         , "doc" .= object
@@ -967,45 +907,45 @@ spec = do
                                             , "access_key" .= String "acdf"
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Channel.PossessMediaSuccess $ Channel.SendableMedia Channel.MediaDocument "doc10_67_acdf")
         it "re-posesses voice messages" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaVoice "" "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.mp3"))
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/docs.getMessagesUploadServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "peer_id" $ 100
                                 , WebDriver.ParamText "type" $ "audio_message"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "upload_url" .= String "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
                                         ]
-                                    ])
-                            , ExpectedDownload
+                                    ]
+                            , Download
                                 "https://psv1.userapi.com/c1//u2/audiomsg/d1/50.mp3"
-                                "<contents of 50.mp3>"
-                            , ExpectedRequest
+                                |>> "<contents of 50.mp3>"
+                            , Request
                                 "https://pu.vk.com/c1/upload.php?act=add_doc_new&mid=2&aid=-1&gid=0&type=0&peer_id=0&rhash=3&api=1&server=4"
                                 [ WebDriver.ParamFile "file" "50.mp3" $ "<contents of 50.mp3>"
                                 ]
-                                (object
+                                |>> object
                                     [ "file" .= String "newvoice|9abc"
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://api.vk.com/method/docs.save"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamText "file" $ "newvoice|9abc"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "type" .= String "audio_message"
                                         , "audio_message" .= object
@@ -1014,26 +954,26 @@ spec = do
                                             , "access_key" .= String "bcde"
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Channel.PossessMediaSuccess $ Channel.SendableMedia Channel.MediaVoice "doc11_68_bcde")
         it "doesn't re-posess unknown media types" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.possessMedia channel 100 (Channel.ForeignMedia Channel.MediaUnknown "unknown" "https://example.test/a.txt"))
                             []
                             (flip shouldBe $
                                 Channel.PossessMediaUnknownType "unknown")
         it "sends text messages" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.sendMessage channel 100 (Channel.plainText "message text") [])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1041,15 +981,15 @@ spec = do
                                 , WebDriver.ParamText "message" $ "message text"
                                 , WebDriver.ParamNum "random_id" $ randoms !! 0
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 15
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right 15)
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.sendMessage channel 100 (Channel.plainText "message text") [])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1057,21 +997,21 @@ spec = do
                                 , WebDriver.ParamText "message" $ "message text"
                                 , WebDriver.ParamNum "random_id" $ randoms !! 1
                                 ]
-                                (object
+                                |>> object
                                     [ "error" .= object
                                         [ "error_msg" .= String "too bad"
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Left "too bad")
         it "updates existing messages" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.updateMessage channel 100 15 (Channel.plainText "message text") [])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.edit"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1079,15 +1019,15 @@ spec = do
                                 , WebDriver.ParamNum "message_id" $ 15
                                 , WebDriver.ParamText "message" $ "message text"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= True
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right ())
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.updateMessage channel 100 0 (Channel.plainText "message text 2") [])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1095,24 +1035,24 @@ spec = do
                                 , WebDriver.ParamNum "random_id" $ randoms !! 0
                                 , WebDriver.ParamText "message" $ "message text 2"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 20
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right ())
         it "sends messages with buttons" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.sendMessage channel 100 (Channel.plainText "message text")
                                 [ Channel.QueryButton "t1" "u1"
                                 , Channel.QueryButton "t2" "u2"
                                 , Channel.QueryButton "t3" "u3"
                                 , Channel.QueryButton "t4" "u4"
                                 ])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1155,24 +1095,24 @@ spec = do
                                         ]
                                     ]
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 15
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right 15)
         it "updates messages with buttons" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.updateMessage channel 100 15 (Channel.plainText "message text")
                                 [ Channel.QueryButton "t1" "u1"
                                 , Channel.QueryButton "t2" "u2"
                                 , Channel.QueryButton "t3" "u3"
                                 , Channel.QueryButton "t4" "u4"
                                 ])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.edit"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1215,15 +1155,15 @@ spec = do
                                         ]
                                     ]
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= True
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right ())
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.updateMessage channel 100 0 (Channel.plainText "message text 2") [])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1231,39 +1171,39 @@ spec = do
                                 , WebDriver.ParamNum "random_id" $ randoms !! 0
                                 , WebDriver.ParamText "message" $ "message text 2"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 20
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right ())
         it "receives button events" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.poll channel)
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/groups.getLongPollServer"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
                                 , WebDriver.ParamNum "group_id" $ groupId
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= object
                                         [ "key" .= String "lpkey"
                                         , "server" .= String "https://lp.vk.com/lpadr/lpadr2"
                                         , "ts" .= String "10"
                                         ]
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://lp.vk.com/lpadr/lpadr2"
                                 [ WebDriver.ParamText "key" $ "lpkey"
                                 , WebDriver.ParamText "ts" $ "10"
                                 , WebDriver.ParamText "act" $ "a_check"
                                 , WebDriver.ParamNum "wait" $ timeout
                                 ]
-                                (object
+                                |>> object
                                     [ "ts" .= String "20"
                                     , "updates" .=
                                         [ object
@@ -1299,7 +1239,7 @@ spec = do
                                                 ]
                                             ]
                                         ]
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 [ Channel.EventMessage 100 10 $ Channel.plainText "qtext 1"
@@ -1307,25 +1247,25 @@ spec = do
                                 , Channel.EventQuery 100 0 "" "qdata \\ \" 3"
                                 ])
         it "sends answers to button queries" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.answerQuery channel "quid" "msg")
                             []
                             (flip shouldBe $
                                 Right ())
         it "sends media" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.sendMedia channel 100 "message text"
                                 [ Channel.SendableMedia Channel.MediaPhoto "photo12_34"
                                 , Channel.SendableMedia Channel.MediaPhoto "photo12_35_abcd"
                                 , Channel.SendableMedia Channel.MediaPhoto "photo12_36_efef"
                                 ])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1334,13 +1274,13 @@ spec = do
                                 , WebDriver.ParamText "message" $ "message text"
                                 , WebDriver.ParamText "attachment" $ "photo12_34,photo12_35_abcd,photo12_36_efef"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 20
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right ())
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.sendMedia channel 100 "message text"
                                 [ Channel.SendableMedia Channel.MediaPhoto "photo12_34"
                                 , Channel.SendableMedia Channel.MediaPhoto "photo12_35_abcd"
@@ -1349,7 +1289,7 @@ spec = do
                                 , Channel.SendableMedia Channel.MediaPhoto "photo12_36_efef"
                                 , Channel.SendableMedia Channel.MediaSticker "sticker40"
                                 ])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1358,10 +1298,10 @@ spec = do
                                 , WebDriver.ParamText "message" $ "message text"
                                 , WebDriver.ParamText "attachment" $ "photo12_34,photo12_35_abcd"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 20
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1369,10 +1309,10 @@ spec = do
                                 , WebDriver.ParamNum "random_id" $ randoms !! 2
                                 , WebDriver.ParamText "sticker_id" $ "sticker20"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 21
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1380,10 +1320,10 @@ spec = do
                                 , WebDriver.ParamNum "random_id" $ randoms !! 3
                                 , WebDriver.ParamText "sticker_id" $ "sticker30"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 21
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1392,10 +1332,10 @@ spec = do
                                 , WebDriver.ParamText "message" $ ""
                                 , WebDriver.ParamText "attachment" $ "photo12_36_efef"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 20
-                                    ])
-                            , ExpectedRequest
+                                    ]
+                            , Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1403,17 +1343,17 @@ spec = do
                                 , WebDriver.ParamNum "random_id" $ randoms !! 5
                                 , WebDriver.ParamText "sticker_id" $ "sticker40"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 20
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right ())
         it "sends rich text messages as plain text" $ do
-            Logger.withNullLogger $ \logger -> do
-                withTestDriver $ \prequestbuf driver -> do
+            Logger.withTestLogger $ \logger -> do
+                withTestDriver $ \pexpectations driver -> do
                     Vk.withVkChannel conf randomSeed logger driver $ \channel -> do
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.sendMessage channel 100
                                 ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "plain "
                                 $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "bold "
@@ -1427,7 +1367,7 @@ spec = do
                                 $ Channel.RichTextSpan (Channel.SpanStyle False False True False) "under"
                                 $ Channel.RichTextEnd )
                                 [])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1435,13 +1375,13 @@ spec = do
                                 , WebDriver.ParamNum "random_id" $ randoms !! 0
                                 , WebDriver.ParamText "message" $ "plain bold italic bolditalic plain under strike understrike boldunder under"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 20
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right 20)
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.sendMessage channel 100
                                 ( Channel.RichTextLink "link url"
                                     ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "link "
@@ -1455,7 +1395,7 @@ spec = do
                                     $ Channel.RichTextEnd )
                                 $ Channel.RichTextEnd )
                                 [])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1463,13 +1403,13 @@ spec = do
                                 , WebDriver.ParamNum "random_id" $ randoms !! 1
                                 , WebDriver.ParamText "message" $ "link bold link (link url) plain mention under (https://vk.com/id345)"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 21
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right 21)
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.sendMessage channel 100
                                 ( Channel.RichTextMono "inline-code"
                                 $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " plain "
@@ -1478,7 +1418,7 @@ spec = do
                                 $ Channel.RichTextCode "code lang" "block-code-lang"
                                 $ Channel.RichTextEnd )
                                 [])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1486,13 +1426,13 @@ spec = do
                                 , WebDriver.ParamNum "random_id" $ randoms !! 2
                                 , WebDriver.ParamText "message" $ "inline-code plain block-code plain block-code-lang"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 22
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right 22)
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.sendMessage channel 100
                                 ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "tt \x1F914"
                                 $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "\x1F914 bb"
@@ -1501,7 +1441,7 @@ spec = do
                                 $ Channel.RichTextSpan (Channel.SpanStyle False False False False) " tt"
                                 $ Channel.RichTextEnd )
                                 [])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1509,20 +1449,20 @@ spec = do
                                 , WebDriver.ParamNum "random_id" $ randoms !! 3
                                 , WebDriver.ParamText "message" $ "tt \x1F914\x1F914 bb \x1F914\x1F914 uu tt"
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 23
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right 23)
-                        perform prequestbuf
+                        perform pexpectations
                             (Channel.sendMessage channel 100
                                 ( Channel.RichTextSpan (Channel.SpanStyle False False False False) "abc<>&\""
                                 $ Channel.RichTextSpan (Channel.SpanStyle True False False False) "abc<>&\""
                                 $ Channel.RichTextSpan (Channel.SpanStyle False False False False) "abc<>&\""
                                 $ Channel.RichTextEnd )
                                 [])
-                            [ ExpectedRequest
+                            [ Request
                                 "https://api.vk.com/method/messages.send"
                                 [ WebDriver.ParamText "v" $ Vk.apiVersion
                                 , WebDriver.ParamText "access_token" $ token
@@ -1530,9 +1470,9 @@ spec = do
                                 , WebDriver.ParamNum "random_id" $ randoms !! 4
                                 , WebDriver.ParamText "message" $ "abc<>&\"abc<>&\"abc<>&\""
                                 ]
-                                (object
+                                |>> object
                                     [ "response" .= Number 24
-                                    ])
+                                    ]
                             ]
                             (flip shouldBe $
                                 Right 24)

@@ -9,12 +9,13 @@ import Control.Monad
 import Data.Foldable
 import Data.Yaml
 import GHC.IO.Encoding (textEncodingName)
+import System.Environment
 import System.IO
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
 import qualified System.Random as Random
 import qualified Channel
--- import qualified Channel.Tg
+import qualified Channel.Tg
 import qualified Channel.Vk
 import qualified Logger
 import qualified Responder
@@ -27,7 +28,10 @@ main = do
     Just encoding1 <- hGetEncoding stdout
     encoding2 <- mkTextEncoding $ textEncodingName encoding1 ++ "//TRANSLIT"
     hSetEncoding stdout encoding2
-    ac <- decodeFileThrow "config.yaml"
+    args <- getArgs
+    ac <- case args of
+        [] -> decodeFileThrow "config.yaml"
+        arg1:_ -> decodeFileThrow arg1
     withLogger (acLogger ac) $ \logger -> do
         let driverlogger = Logger.loggerFilter (logLevel $ acWebDriverLogLevel ac) logger
         WebDriver.withWebDriver driverlogger $ \driver -> do
@@ -37,7 +41,6 @@ main = do
                 withResponder (acResponder ac) responderlogger channel $ \responder -> do
                     catch
                         (forever $ Responder.work responder)
-                        -- (Responder.work responder)
                         (logFatal logger)
     where
     logFatal :: Logger.Handle -> SomeException -> IO ()
@@ -47,8 +50,8 @@ main = do
 
 
 withChannel :: ChannelConfig -> Logger.Handle -> WebDriver.Handle -> (Channel.Handle -> IO r) -> IO r
--- withChannel (TgChannelConfig conf) logger driver body = do
-    -- Channel.Tg.withTgChannel conf logger driver body
+withChannel (TgChannelConfig conf) logger driver body = do
+    Channel.Tg.withTgChannel conf logger driver body
 withChannel (VkChannelConfig conf) logger driver body = do
     randomSeed <- Random.randomIO
     Channel.Vk.withVkChannel conf randomSeed logger driver body
@@ -89,8 +92,8 @@ data AppConfig
 
 
 data ChannelConfig
-    -- = TgChannelConfig Channel.Tg.Config
-    = VkChannelConfig Channel.Vk.Config
+    = TgChannelConfig Channel.Tg.Config
+    | VkChannelConfig Channel.Vk.Config
     deriving (Show)
 
 
@@ -128,21 +131,21 @@ instance FromJSON ChannelConfig where
     parseJSON = withObject "ChannelConfig" $ \v -> do
         typename <- v .: "type"
         case typename of
-            "tg" -> undefined
+            "tg" -> parseTg v
             "vk" -> parseVk v
             _ -> fail $ "unknown channel type: " ++ typename
         where
-        -- parseTg = withObject "TgChannelConfig" $ \v -> do
-            -- (TgChannelConfig <$>) $
-                -- Channel.Tg.Config
-                    -- <$> v .: "token"
-                    -- <*> v .:? "timeout" .!= 60
-                    -- <*> v .:? "keyboard-width" .!= 5
+        parseTg v = do
+            (TgChannelConfig <$>) $
+                Channel.Tg.Config
+                    <$> v .: "tg-token"
+                    <*> v .:? "timeout" .!= 60
+                    <*> v .:? "keyboard-width" .!= 5
         parseVk v = do
             (VkChannelConfig <$>) $
                 Channel.Vk.Config
-                    <$> v .: "token"
-                    <*> v .: "group-id"
+                    <$> v .: "vk-token"
+                    <*> v .: "vk-group-id"
                     <*> v .:? "timeout" .!= 60
                     <*> v .:? "keyboard-width" .!= 5
 

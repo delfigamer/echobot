@@ -1,5 +1,13 @@
 # This is a configuration template
 # To get started, copy this file, rename it "config.yaml" and fill in the bot's token
+# Alternatively, if you have multiple bots, it is also possible to fill multiple copies of this file
+# To make the program load a different config file from the default "config.yaml", pass its path as the first parameter
+# For example, if you have "vk.yaml" and "tg.yaml" filled for different bots, then using them is done through these commands:
+#   > echobot "vk.yaml"
+#   > echobot "tg.yaml"
+# Or, if you use Stack to lauch the program, then the corresponding commands become:
+#   > stack run "vk.yaml"
+#   > stack run "tg.yaml"
 
 
 # The list of places that will receive the program log
@@ -29,19 +37,25 @@ responder-log-level: debug
 
 
 # Chosen front-end for the bot
-# Currently, only Telegram ("tg") is supported
 channel:
-  tg:
-    # The bot token, including the word "bot" in front of it
-    # -------------------- This field must be set!  --------------------
-    token: bot1234567890:ABCDEFGHIJKL__mnopqrstuvwxyz0123456
-    # Timeout for the long polling, in seconds
-    # The default is 60
-    timeout: 60
-    # Maximum number of buttons in a single row of a keyboard
-    # When the back-end sends more buttons than this value, they are broken into multiple rows
-    # The default is 5
-    keyboard-width: 5
+  # The bot server and protocol, either "tg" for Telegram or "vk" for Vkontakte
+  type: tg
+  # type: vk
+  # The Telegram bot token
+  # This token includes the word "bot" in front of it
+  # -------------------- This field must be set!  --------------------
+  tg-token: bot1234567890:ABCDEFGHIJKL__mnopqrstuvwxyz0123456
+  # The Vkontakte bot token
+  vk-token: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234
+  # The group id of the Vkontakte bot
+  vk-group-id: 123456789
+  # Timeout for the long polling, in seconds
+  # The default is 60
+  timeout: 60
+  # Maximum number of buttons in a single row of a keyboard
+  # When the back-end sends more buttons than this value, they are broken into multiple rows
+  # The default is 5
+  keyboard-width: 5
 
 
 # Chosen back-end for the bot
@@ -83,6 +97,21 @@ responder:
     # Once a new multiplier is set, the message above is replaced with this one, and the keyboard is removed
     multiplier-set-msg: |
       Текущий множитель установлен: %1
-    # This is the maximum multiplier that the bot allows to set
+    # Error messages below are sent into the chat when certain media cannot be sent back
+    # This message is used for media types that are unknown to the bot
+    # In this message, %1 stands for the typename of the media
+    # This message is sent once for every distinct unknown typename
+    media-unknown-type-msg: |
+      В предыдущем сообщении встречен неизвестный тип вложения "%1"
+    # This message is used for media that are impossible to re-send correctly (e. g. the server doesn't give a download link, and doesn't allow it to be sent directly either)
+    # This message has no parameters and is sent at most once per the user's message
+    media-unsupported-msg: |
+      В предыдущем сообщении встречены вложения, которые невозможно переслать в целостности
+    # This message is used when media should be possible to re-send, but trying to actually do that has resulted in an error (e. g. the download link is there, but gives a 404)
+    # The actual error is not shown to the user, but is still recorded to the log at "err" level
+    # This message has no parameters and is sent at most once per the user's message
+    media-internal-error-msg: |
+      В ходе пересылки некоторых вложений возникли непредвиженные ошибки
+    # This is the maximum multiplier that the bot allows to be set
     # The default is 5
     max-multiplier: 5
