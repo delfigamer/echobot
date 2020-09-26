@@ -1,7 +1,4 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
+{- HLINT ignore "Use head" -}
 
 
 module Channel.VkSpec
@@ -9,24 +6,8 @@ module Channel.VkSpec
     ) where
 
 
-import Control.Applicative
-import Control.Exception
-import Control.Monad
-import Control.Monad.IO.Class (MonadIO(..))
 import Data.Aeson
-import Data.Aeson.Text
-import Data.Either
-import Data.IORef
-import Data.List
-import Data.Maybe
-import Network.HTTP.Req
 import Test.Hspec
-import Test.Hspec.Expectations
-import qualified Data.ByteString.Lazy.Char8 as BSL
-import qualified Data.Text as Text
-import qualified Data.Text.Lazy as TextLazy
-import qualified Data.Text.Lazy.Encoding as EncodingLazy
-import qualified System.IO as IO
 import qualified System.Random as Random
 import qualified Channel
 import qualified Channel.Vk.Internal as Vk

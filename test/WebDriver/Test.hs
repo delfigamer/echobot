@@ -1,6 +1,4 @@
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
@@ -14,26 +12,13 @@ module WebDriver.Test
     ) where
 
 
-import Control.Applicative
-import Control.Exception
-import Control.Monad
-import Control.Monad.IO.Class (MonadIO(..))
 import Data.Aeson
 import Data.IORef
 import Data.List
-import Data.Maybe
-import Network.HTTP.Req
 import Test.Hspec
-import Test.Hspec.Expectations
 import qualified Data.ByteString.Lazy.Char8 as BSL
 import qualified Data.Text as Text
 import qualified Data.Text.Lazy as TextLazy
-import qualified Data.Text.Encoding as TextEncoding
-import qualified System.IO as IO
-import qualified Channel
-import qualified Logger
-import qualified Responder
-import qualified Responder.Repeat
 import qualified WebDriver
 
 
@@ -79,8 +64,8 @@ instance Show AnAction where
 
 
 instance Eq AnAction where
-    AnAction (Request address1 params1) == AnAction (Request address2 params2) = True
-        && address1 == address2
+    AnAction (Request address1 params1) == AnAction (Request address2 params2)
+        =  address1 == address2
         && normalizeParamSet params1 == normalizeParamSet params2
     AnAction (Download address1) == AnAction (Download address2) = address1 == address2
     _ == _ = False
@@ -131,8 +116,8 @@ expectAction pexpectations action = do
 
 
 matchAction :: Action a -> ActionExpectation -> a
-matchAction (Request {}) (ActionExpectation Request {} r _) = r
-matchAction (Download {}) (ActionExpectation Download {} r _) = r
+matchAction Request {} (ActionExpectation Request {} r _) = r
+matchAction Download {} (ActionExpectation Download {} r _) = r
 matchAction _ _ = undefined
 
 

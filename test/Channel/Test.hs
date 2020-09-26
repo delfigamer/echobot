@@ -1,6 +1,4 @@
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
@@ -13,23 +11,10 @@ module Channel.Test
     ) where
 
 
-import Control.Applicative
-import Control.Exception
-import Control.Monad
-import Control.Monad.IO.Class (MonadIO(..))
-import Data.Aeson
 import Data.IORef
-import Data.Maybe
-import Network.HTTP.Req
 import Test.Hspec
-import Test.Hspec.Expectations
 import qualified Data.Text as Text
-import qualified Data.Text.Encoding as TextEncoding
-import qualified System.IO as IO
 import qualified Channel
-import qualified Logger
-import qualified Responder
-import qualified Responder.Repeat
 
 
 data Action a where
@@ -71,11 +56,11 @@ instance Show AnAction where
 
 
 instance Eq AnAction where
-    AnAction a@(SendMessage {}) == AnAction b@(SendMessage {}) = a == b
-    AnAction a@(SendMedia {}) == AnAction b@(SendMedia {}) = a == b
-    AnAction a@(PossessMedia {}) == AnAction b@(PossessMedia {}) = a == b
-    AnAction a@(UpdateMessage {}) == AnAction b@(UpdateMessage {}) = a == b
-    AnAction a@(AnswerQuery {}) == AnAction b@(AnswerQuery {}) = a == b
+    AnAction a@SendMessage {} == AnAction b@SendMessage {} = a == b
+    AnAction a@SendMedia {} == AnAction b@SendMedia {} = a == b
+    AnAction a@PossessMedia {} == AnAction b@PossessMedia {} = a == b
+    AnAction a@UpdateMessage {} == AnAction b@UpdateMessage {} = a == b
+    AnAction a@AnswerQuery {} == AnAction b@AnswerQuery {} = a == b
     _ == _ = False
 
 
@@ -97,7 +82,7 @@ withTestChannel body = do
 testPoll :: IORef (Maybe [Channel.Event]) -> IO [Channel.Event]
 testPoll pevents = do
     Just events <- readIORef pevents
-    writeIORef pevents $! Nothing
+    writeIORef pevents $ Nothing
     return events
 
 
@@ -140,9 +125,9 @@ expectAction pexpectations action = do
 
 
 matchAction :: Action a -> ActionExpectation -> a
-matchAction (SendMessage {}) (ActionExpectation SendMessage {} r _) = r
-matchAction (SendMedia {}) (ActionExpectation SendMedia {} r _) = r
-matchAction (PossessMedia {}) (ActionExpectation PossessMedia {} r _) = r
-matchAction (UpdateMessage {}) (ActionExpectation UpdateMessage {} r _) = r
-matchAction (AnswerQuery {}) (ActionExpectation AnswerQuery {} r _) = r
+matchAction SendMessage {} (ActionExpectation SendMessage {} r _) = r
+matchAction SendMedia {} (ActionExpectation SendMedia {} r _) = r
+matchAction PossessMedia {} (ActionExpectation PossessMedia {} r _) = r
+matchAction UpdateMessage {} (ActionExpectation UpdateMessage {} r _) = r
+matchAction AnswerQuery {} (ActionExpectation AnswerQuery {} r _) = r
 matchAction _ _ = undefined

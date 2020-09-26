@@ -1,7 +1,3 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
 
@@ -11,14 +7,10 @@ module Channel.Tg
     ) where
 
 
-import Control.Applicative
 import Control.Monad
 import Data.Aeson
-import Data.Aeson.Text
-import Data.Either
 import Data.IORef
 import Data.List
-import Data.Maybe
 import Data.Text (Text)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
@@ -73,12 +65,13 @@ tgcNew conf logger driver = do
         , tgcDriver = driver
         , tgcOffset = poffset }
     where
-    isValidTokenChar c = False
-        || '0' <= c && c <= '9'
-        || 'a' <= c && c <= 'z'
-        || 'A' <= c && c <= 'Z'
-        || c == '_'
-        || c == ':'
+    isValidTokenChar c = or
+        [ '0' <= c && c <= '9'
+        , 'a' <= c && c <= 'z'
+        , 'A' <= c && c <= 'Z'
+        , c == '_'
+        , c == ':'
+        ]
 
 
 tgcPoll :: TgChannel -> IO [Channel.Event]
@@ -212,14 +205,14 @@ tgcSendMedia
     -> Text.Text
     -> [Channel.SendableMedia]
     -> IO (Either Text.Text ())
-tgcSendMedia tgc chatId caption0 group = do
+tgcSendMedia tgc chatId caption0 mediaList = do
     Logger.info (tgcLogger tgc) $
         "TgChannel: Send media"
     Logger.debug (tgcLogger tgc) $
         "TgChannel: \t" <> Text.pack (show chatId) <> " <- " <> Text.pack (show caption0)
     Logger.debug (tgcLogger tgc) $
-        "TgChannel: \t" <> Text.pack (show group)
-    let (trivialLeft, rest) = break isNontrivialMedia group
+        "TgChannel: \t" <> Text.pack (show mediaList)
+    let (trivialLeft, rest) = break isNontrivialMedia mediaList
     doTrivial (Right ()) caption0 trivialLeft rest
     where
     doTrivial current "" [] rest = doNext current rest
@@ -273,6 +266,7 @@ tgcSendMedia tgc chatId caption0 group = do
                 Logger.err (tgcLogger tgc) $
                     "TgChannel: Sticker sending failed: " <> e
                 doNext (current >> Left e) rest
+    doSingular _ [] = error "shouldn't happen"
     doNext current [] = return current
     doNext current subgroup = do
         let (trivialLeft, rest) = break isNontrivialMedia subgroup
@@ -440,15 +434,15 @@ data TgResponse a
 
 
 data TgUpdate
-    = TgMessage
-        { tguOffset :: !Integer
-        , tguValue :: !Value }
-    | TgQuery
-        { tguOffset :: !Integer
-        , tguValue :: !Value }
-    | TgUnknown
-        { tguOffset :: !Integer
-        , tguSourceFields :: [Text] }
+    = TgMessage !Integer !Value
+    | TgQuery !Integer !Value
+    | TgUnknown !Integer [Text]
+
+
+tguOffset :: TgUpdate -> Integer
+tguOffset (TgMessage ofs _) = ofs
+tguOffset (TgQuery ofs _) = ofs
+tguOffset (TgUnknown ofs _) = ofs
 
 
 instance FromJSON a => FromJSON (TgResponse a) where
@@ -659,6 +653,7 @@ consumeMessage = do
                 TgTextMention user -> embedConsumer (Channel.RichTextMention user) $ consumeStyleSpan end Channel.plainStyle
                 TgTextMono -> packWith end $ Channel.RichTextMono
                 TgTextCode lang -> packWith end $ Channel.RichTextCode lang
+                TgTextIgnore -> error "shouldn't happen"
             consumeMessage
         Nothing -> do
             packFinalWith $ Channel.RichTextSpan Channel.plainStyle

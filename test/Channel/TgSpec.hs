@@ -1,28 +1,11 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-
-
 module Channel.TgSpec
     ( spec
     ) where
 
 
-import Control.Applicative
-import Control.Exception
-import Control.Monad
-import Control.Monad.IO.Class (MonadIO(..))
 import Data.Aeson
-import Data.HashMap.Strict as HashMap
-import Data.IORef
-import Data.Maybe
 import Data.Text (Text)
-import Network.HTTP.Req
 import Test.Hspec
-import Test.Hspec.Expectations
-import qualified Data.Text.Encoding as TextEncoding
-import qualified System.IO as IO
 import qualified Channel
 import qualified Channel.Tg as Tg
 import qualified Logger

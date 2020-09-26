@@ -5,3 +5,5 @@ config.yaml
 vk.yaml
 tg.yaml
 !.gitignore
+!.hlint.yaml
+!.hindent.yaml

@@ -1,7 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
 
@@ -14,10 +11,7 @@ module WebDriver
     ) where
 
 
-import Control.Applicative
-import Control.Exception
 import Control.Monad
-import Control.Monad.IO.Class (MonadIO(..))
 import Data.Aeson
 import Data.Aeson.Text
 import Network.HTTP.Req
@@ -29,7 +23,6 @@ import qualified Data.Text.Lazy as TextLazy
 import qualified Data.Text.Lazy.Encoding as EncodingLazy
 import qualified Network.HTTP.Client as Client
 import qualified Network.HTTP.Client.MultipartFormData as Multipart
-import qualified System.IO as IO
 import qualified Text.URI as URI
 import qualified Logger
 
@@ -46,6 +39,7 @@ data Param
     deriving (Show, Eq)
 
 
+paramName :: Param -> Text.Text
 paramName (ParamText name _) = name
 paramName (ParamTextLazy name _) = name
 paramName (ParamNum name _) = name
@@ -71,7 +65,7 @@ webRequest :: (FromJSON b) => Logger.Handle -> Address -> [Param] -> IO b
 webRequest logger address params = do
     Logger.debug logger $
         "WebDriver: Send request to " <> address
-    forM params $ \p -> do
+    forM_ params $ \p -> do
         case p of
             ParamText name text -> do
                 Logger.debug logger $

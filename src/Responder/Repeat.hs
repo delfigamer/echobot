@@ -1,23 +1,12 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-
-
 module Responder.Repeat
     ( Config(..)
     , withRepeatResponder
     ) where
 
 
-import Control.Applicative
-import Control.Exception
 import Control.Monad
-import Control.Monad.IO.Class (MonadIO(..))
-import Data.Aeson
 import Data.IORef
 import Data.List
-import Network.HTTP.Req
 import qualified Data.HashTable.IO as IOTable
 import qualified Data.Text as Text
 import qualified Channel
@@ -86,8 +75,8 @@ erHandleEvent er (Channel.EventMessage chatId _ content@(Channel.RichTextSpan (C
         else erRepeatMessage er chatId content
 erHandleEvent er (Channel.EventMessage chatId _ content) = do
     erRepeatMessage er chatId content
-erHandleEvent er (Channel.EventMedia chatId caption group) = do
-    erRepeatMedia er chatId caption group
+erHandleEvent er (Channel.EventMedia chatId caption mediaList) = do
+    erRepeatMedia er chatId caption mediaList
 erHandleEvent er (Channel.EventQuery chatId messageId queryId userdata) = do
     erMakeRequest er "answerQuery" $
         Channel.answerQuery (erChannel er) queryId ""
@@ -124,7 +113,7 @@ erRepeatMedia er chatId caption inGroup = do
     replicateM_ mult $ do
         erMakeRequest er "sendMedia" $
             Channel.sendMedia (erChannel er) chatId caption sendableGroup
-    forM unknownTypes $ \typename -> do
+    forM_ unknownTypes $ \typename -> do
         erMakeRequest er "sendMessage" $
             Channel.sendMessage (erChannel er) chatId
                 (Channel.plainText $ substitute [Text.unpack typename] $ cMediaUnknownTypeMsg (erConfig er))
@@ -209,7 +198,7 @@ erGetMultiplier er chatId = do
 erSetMultiplier :: RepeatResponder -> Channel.ChatId -> Int -> IO ()
 erSetMultiplier er chatId mult = do
     cc <- erProvideChatContext er chatId
-    writeIORef (ccMultiplier cc) $! Just mult
+    writeIORef (ccMultiplier cc) $ Just mult
     Logger.info (erLogger er) $
         "Responder: set multiplier in " <> Text.pack (show chatId) <> " to " <> Text.pack (show mult)
 

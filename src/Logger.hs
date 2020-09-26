@@ -1,8 +1,3 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-
-
 module Logger
     ( LogLevel(..)
     , Handle(..)
@@ -78,7 +73,7 @@ loggerFilter minlevel inner = do
 withNullLogger :: (Handle -> IO r) -> IO r
 withNullLogger body = do
     body $ Handle
-        { send = \level text -> return () }
+        { send = \_ _ -> return () }
 
 
 withFileLogger :: FilePath -> (Handle -> IO r) -> IO r

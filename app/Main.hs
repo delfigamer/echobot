@@ -1,6 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
-
 module Main where
 
 
@@ -11,7 +8,6 @@ import Data.Yaml
 import GHC.IO.Encoding (textEncodingName)
 import System.Environment
 import System.IO
-import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
 import qualified System.Random as Random
 import qualified Channel
@@ -61,8 +57,8 @@ withLogger :: LoggerConfig -> (Logger.Handle -> IO r) -> IO r
 withLogger NullLoggerConfig body = Logger.withNullLogger body
 withLogger StdLoggerConfig body = Logger.withStdLogger body
 withLogger (FileLoggerConfig filepath) body = Logger.withFileLogger filepath body
-withLogger (MultiLoggerConfig logs) body = do
-    withMulti logs body
+withLogger (MultiLoggerConfig logs) body0 = do
+    withMulti logs body0
     where
     withMulti [] body = Logger.withNullLogger body
     withMulti [a] body = withLogger a body
@@ -70,8 +66,8 @@ withLogger (MultiLoggerConfig logs) body = do
         withLogger a $ \la -> do
             withMulti rest $ \lrest -> do
                 Logger.withMultiLogger la lrest body
-withLogger (FilterLoggerConfig (LogLevelConfig level) log) body = do
-    withLogger log $ \la -> do
+withLogger (FilterLoggerConfig (LogLevelConfig level) logconf) body = do
+    withLogger logconf $ \la -> do
         body $ Logger.loggerFilter level la
 
 

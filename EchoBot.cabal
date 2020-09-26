@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 4c7f977d8aa0500093b88fcbd2e530d405af77d7ebd68b27c55ac913dc379904
+-- hash: de2d2e0ee29d4fb286005d0db1b3ac212ff199feaf3c970aeaa66955cd950396
 
 name:           EchoBot
 version:        0.1.0.0
@@ -39,6 +39,7 @@ library
       Paths_EchoBot
   hs-source-dirs:
       src
+  default-extensions: OverloadedStrings
   build-depends:
       aeson >=1.4 && <2
     , ansi-terminal >=0.10 && <1
@@ -66,6 +67,7 @@ executable EchoBot-exe
       Paths_EchoBot
   hs-source-dirs:
       app
+  default-extensions: OverloadedStrings
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       EchoBot
@@ -101,6 +103,7 @@ test-suite EchoBot-test
       Paths_EchoBot
   hs-source-dirs:
       test
+  default-extensions: OverloadedStrings
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       EchoBot
