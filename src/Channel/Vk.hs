@@ -3,5 +3,4 @@ module Channel.Vk
     , withVkChannel
     ) where
 
-
 import Channel.Vk.Internal

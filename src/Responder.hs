@@ -2,7 +2,7 @@ module Responder
     ( Handle(..)
     ) where
 
-
-data Handle
-    = Handle
-        { work :: IO () }
+data Handle =
+    Handle
+        { work :: IO ()
+        }

@@ -1,5 +1,6 @@
 .*
 *~
+*.bat
 *.log
 config.yaml
 vk.yaml
