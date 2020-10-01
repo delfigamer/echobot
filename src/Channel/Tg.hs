@@ -624,8 +624,9 @@ parseMessageText text entities = do
 
 newtype MessageTextConsumer t =
     MessageTextConsumer
-        { runConsumer :: forall r. (t -> [TgTextEntity] -> [(Char, Int)] -> (Channel.RichText -> Channel.RichText) -> r) -> [TgTextEntity] -> [( Char
-                                                                                                                                               , Int)] -> (Channel.RichText -> Channel.RichText) -> r
+        { runConsumer :: forall r.
+               (t -> [TgTextEntity] -> [(Char, Int)] -> (Channel.RichText -> Channel.RichText) -> r)
+            ->       [TgTextEntity] -> [(Char, Int)] -> (Channel.RichText -> Channel.RichText) -> r
         }
 
 instance Functor MessageTextConsumer where
